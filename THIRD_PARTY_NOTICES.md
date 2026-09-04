@@ -7,6 +7,7 @@ Key runtime components include:
 | Component | Purpose | License |
 | --- | --- | --- |
 | React / React DOM | User interface | MIT |
+| Electron | Desktop runtime and embedded recruitment browser | MIT |
 | Vite | Frontend build tooling | MIT |
 | Fastify and official plugins | Local HTTP API | MIT |
 | Cheerio | Structured HTML parsing | MIT |

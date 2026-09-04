@@ -46,6 +46,11 @@ export const api = {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),
   }),
+  captureJobs: (jobs: Array<Record<string, unknown>>) => request<{ received: number; inserted: number; ids: number[] }>("/api/jobs/capture", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(jobs),
+  }),
   setApplicationStatus: (jobId: number, status: string) => request<{ ok: boolean }>(`/api/applications/${jobId}/status`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

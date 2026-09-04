@@ -57,7 +57,7 @@ app.setErrorHandler((error, _request, reply) => {
   reply.status(statusCode).send({ error: normalized.message || "请求处理失败" });
 });
 
-app.get("/api/health", async () => ({ status: "ok", version: "0.2.0", time: new Date().toISOString() }));
+app.get("/api/health", async () => ({ status: "ok", version: "0.3.0", time: new Date().toISOString() }));
 app.get("/api/overview", async () => overview());
 app.get("/api/sources", async () => sources);
 app.get("/api/ai/status", async () => getAIStatus());

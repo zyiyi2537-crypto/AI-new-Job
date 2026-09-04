@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowRight,
   ArrowUpRight,
   BarChart3,
@@ -17,6 +18,7 @@ import {
   FileText,
   FolderSearch,
   Gauge,
+  Globe2,
   KeyRound,
   LayoutDashboard,
   Link2,
@@ -26,6 +28,7 @@ import {
   Radar,
   RefreshCw,
   Search,
+  ScanSearch,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -38,6 +41,7 @@ import {
 } from "lucide-react";
 import type { AIStatus, Job, Overview, ResumeMaster, ResumeMasterData, ResumeVariant, SearchLink, SourceDefinition } from "../shared/types";
 import { api } from "./api";
+import { collectJobsFromPage, type CapturedJob } from "./job-capture";
 
 type Page = "overview" | "resume" | "discover" | "jobs" | "variants" | "applications" | "settings";
 
@@ -245,6 +249,120 @@ function ResumePage({ master, onUploaded }: { master: ResumeMaster; onUploaded: 
 
 type ImportMode = "url" | "manual";
 
+const isDesktopShell = () => new URLSearchParams(window.location.search).get("desktop") === "1" || /Electron\//i.test(navigator.userAgent);
+
+function EmbeddedRecruitmentBrowser({ links, onChanged }: { links: SearchLink[]; onChanged: () => Promise<void> }) {
+  const [webview, setWebview] = useState<HTMLWebViewElement | null>(null);
+  const [activeId, setActiveId] = useState("boss");
+  const [requestedUrl, setRequestedUrl] = useState(links.find((link) => link.id === "boss")?.url || "https://www.zhipin.com/");
+  const [address, setAddress] = useState(requestedUrl);
+  const [loading, setLoading] = useState(true);
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [canGoForward, setCanGoForward] = useState(false);
+  const [busy, setBusy] = useState<"current" | "list" | "">("");
+  const [message, setMessage] = useState("招聘网站登录态只保存在这个桌面应用中。");
+
+  const syncNavigation = useCallback(() => {
+    if (!webview) return;
+    const currentUrl = webview.getURL();
+    if (currentUrl) setAddress(currentUrl);
+    setCanGoBack(webview.canGoBack());
+    setCanGoForward(webview.canGoForward());
+  }, [webview]);
+
+  useEffect(() => {
+    if (!webview) return undefined;
+    const started = () => setLoading(true);
+    const stopped = () => { setLoading(false); syncNavigation(); };
+    const navigated = () => syncNavigation();
+    const failed = (event: Event) => {
+      const detail = event as Event & { errorDescription?: string; validatedURL?: string };
+      if (detail.errorDescription === "ERR_ABORTED") return;
+      setLoading(false);
+      setMessage(`页面加载失败：${detail.errorDescription || detail.validatedURL || "未知错误"}`);
+    };
+    webview.addEventListener("did-start-loading", started);
+    webview.addEventListener("did-stop-loading", stopped);
+    webview.addEventListener("did-navigate", navigated);
+    webview.addEventListener("did-navigate-in-page", navigated);
+    webview.addEventListener("did-fail-load", failed);
+    return () => {
+      webview.removeEventListener("did-start-loading", started);
+      webview.removeEventListener("did-stop-loading", stopped);
+      webview.removeEventListener("did-navigate", navigated);
+      webview.removeEventListener("did-navigate-in-page", navigated);
+      webview.removeEventListener("did-fail-load", failed);
+    };
+  }, [syncNavigation, webview]);
+
+  useEffect(() => {
+    const next = links.find((link) => link.id === activeId);
+    if (!next || next.url === requestedUrl) return;
+    setRequestedUrl(next.url);
+    setAddress(next.url);
+  }, [activeId, links, requestedUrl]);
+
+  const navigate = (nextUrl: string) => {
+    let parsed: URL;
+    try { parsed = new URL(nextUrl); }
+    catch { setMessage("请输入完整的 http 或 https 地址。"); return; }
+    if (!/^https?:$/.test(parsed.protocol)) { setMessage("只支持 http 或 https 页面。"); return; }
+    setRequestedUrl(parsed.toString());
+    setAddress(parsed.toString());
+    setMessage("正在打开招聘页面...");
+    if (webview) void webview.loadURL(parsed.toString());
+  };
+
+  const switchPlatform = (link: SearchLink) => {
+    setActiveId(link.id);
+    navigate(link.url);
+  };
+
+  const capture = async (mode: "current" | "list") => {
+    if (!webview || loading) { setMessage("请等待招聘页面加载完成。"); return; }
+    setBusy(mode);
+    setMessage(mode === "current" ? "正在读取当前岗位..." : "正在扫描当前列表...");
+    try {
+      const script = `(${collectJobsFromPage.toString()})(${JSON.stringify(mode)})`;
+      const captured = await webview.executeJavaScript<CapturedJob[]>(script, true);
+      const jobs = Array.isArray(captured) ? captured.filter((job) => job.title && job.description?.length >= 20 && /^https?:/.test(job.url)) : [];
+      if (!jobs.length) throw new Error(mode === "current" ? "当前页面不是完整岗位详情，请打开一个岗位后重试" : "当前页面没有识别到岗位列表，请确认列表已加载");
+      const result = await api.captureJobs(jobs);
+      setMessage(`读取 ${result.received} 条，新增 ${result.inserted} 条；重复岗位已自动跳过。`);
+      await onChanged();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "岗位采集失败");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <section className="surface embedded-browser">
+      <header className="embedded-browser-head">
+        <div><h2>内置招聘浏览器</h2><p>登录、搜索、查看岗位并直接采集到岗位库</p></div>
+        <Tag tone="green" icon={Globe2}>桌面模式</Tag>
+      </header>
+      <div className="embedded-platform-tabs" role="tablist">
+        {links.map((link) => <button key={link.id} className={activeId === link.id ? "active" : ""} onClick={() => switchPlatform(link)}><span className={`source-logo source-${link.id}`}>{link.name.slice(0, 1)}</span>{link.name}</button>)}
+      </div>
+      <div className="browser-toolbar">
+        <IconButton icon={ArrowLeft} label="后退" disabled={!canGoBack} onClick={() => webview?.goBack()} />
+        <IconButton icon={ArrowRight} label="前进" disabled={!canGoForward} onClick={() => webview?.goForward()} />
+        <IconButton icon={RefreshCw} label="刷新招聘页面" onClick={() => webview?.reload()} />
+        <form onSubmit={(event) => { event.preventDefault(); navigate(address); }}><Globe2 size={15} /><input aria-label="招聘页面地址" value={address} onChange={(event) => setAddress(event.target.value)} /><button>打开</button></form>
+        <Button icon={FileText} variant="secondary" disabled={Boolean(busy) || loading} onClick={() => void capture("current")}>{busy === "current" ? "读取中" : "采集当前岗位"}</Button>
+        <Button icon={ScanSearch} disabled={Boolean(busy) || loading} onClick={() => void capture("list")}>{busy === "list" ? "扫描中" : "扫描当前列表"}</Button>
+      </div>
+      <div className={`webview-stage ${loading ? "is-loading" : ""}`}>
+        {loading ? <div className="webview-loading"><LoaderCircle className="spin" size={20} />正在加载招聘网站</div> : null}
+        <webview ref={setWebview} src={requestedUrl} partition="persist:jobpilot-recruitment" useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36" />
+      </div>
+      <div className={`browser-message ${/失败|没有|不是|请等待|请输入/.test(message) ? "error" : ""}`}><ShieldCheck size={15} />{message}</div>
+    </section>
+  );
+}
+
 function DiscoverPage({ sources, jobCount, onChanged }: { sources: SourceDefinition[]; jobCount: number; onChanged: () => Promise<void> }) {
   const [query, setQuery] = useState("AI 产品经理");
   const [city, setCity] = useState("杭州");
@@ -255,6 +373,7 @@ function DiscoverPage({ sources, jobCount, onChanged }: { sources: SourceDefinit
   const [form, setForm] = useState({ title: "", company: "", location: "", salaryText: "", url: "", description: "" });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const desktopMode = isDesktopShell();
 
   useEffect(() => {
     void api.collectorInfo().then((info) => setCollectorPath(info.extensionPath)).catch(() => undefined);
@@ -305,14 +424,16 @@ function DiscoverPage({ sources, jobCount, onChanged }: { sources: SourceDefinit
     <>
       <PageHeader title="岗位发现" subtitle="从招聘网站搜索、公开链接或当前浏览器页面导入真实岗位" actions={<div className="live-count"><span className="status-dot" />岗位库已有 <b>{jobCount}</b> 条</div>} />
       <section className="discovery-command">
-        <div className="command-heading"><Radar size={20} /><div><h2>跨平台搜索</h2><p>生成真实平台搜索入口，登录和验证留在你的浏览器中完成</p></div></div>
+        <div className="command-heading"><Radar size={20} /><div><h2>跨平台搜索</h2><p>{desktopMode ? "搜索结果直接载入下方内置浏览器，登录态会保留" : "生成真实平台搜索入口，登录和验证留在你的浏览器中完成"}</p></div></div>
         <form className="search-command" onSubmit={createLinks}>
           <label><span>目标岗位</span><div><Search size={17} /><input required value={query} onChange={(event) => setQuery(event.target.value)} /></div></label>
           <label><span>城市</span><div><FolderSearch size={17} /><input value={city} onChange={(event) => setCity(event.target.value)} /></div></label>
           <Button icon={Radar} disabled={busy}>更新入口</Button>
         </form>
-        <div className="platform-launches">{links.map((link) => <a key={link.id} href={link.url} target="_blank" rel="noreferrer"><span className={`source-logo source-${link.id}`}>{link.name.slice(0, 1)}</span><span><strong>{link.name}</strong><small>打开搜索结果</small></span><ArrowUpRight size={16} /></a>)}</div>
+        {!desktopMode ? <div className="platform-launches">{links.map((link) => <a key={link.id} href={link.url} target="_blank" rel="noreferrer"><span className={`source-logo source-${link.id}`}>{link.name.slice(0, 1)}</span><span><strong>{link.name}</strong><small>打开搜索结果</small></span><ArrowUpRight size={16} /></a>)}</div> : null}
       </section>
+
+      {desktopMode ? <EmbeddedRecruitmentBrowser links={links} onChanged={onChanged} /> : <section className="surface desktop-browser-prompt"><div><Globe2 size={20} /><span><strong>内置招聘浏览器需要桌面模式</strong><small>运行 <code>npm run desktop</code>，即可在项目内登录和浏览 BOSS、智联、猎聘、拉勾。</small></span></div><Tag tone="blue">网页模式</Tag></section>}
 
       <div className="discovery-grid">
         <section className="surface source-status-panel">
@@ -329,7 +450,7 @@ function DiscoverPage({ sources, jobCount, onChanged }: { sources: SourceDefinit
         </section>
 
         <aside className="surface collector-panel">
-          <div className="section-heading"><div><h2>Chrome 采集助手</h2><p>采集已登录页面中的可见岗位</p></div><Tag tone="blue" icon={Zap}>本地桥接</Tag></div>
+          <div className="section-heading"><div><h2>{desktopMode ? "Chrome 采集助手（备用）" : "Chrome 采集助手"}</h2><p>采集已登录页面中的可见岗位</p></div><Tag tone="blue" icon={Zap}>本地桥接</Tag></div>
           <ol className="setup-steps"><li><b>1</b><span>打开 <code>chrome://extensions/</code> 并启用开发者模式</span></li><li><b>2</b><span>加载已解压扩展，选择下方目录</span></li><li><b>3</b><span>在招聘页面点击扩展，采集当前岗位或列表</span></li></ol>
           <div className="path-field"><code>{collectorPath}</code><IconButton icon={Copy} label="复制扩展目录" onClick={() => void copyPath()} /></div>
           <div className="notice"><ShieldCheck size={16} /><p>扩展不读取 Cookie、密码或浏览记录，不执行自动投递。</p></div>
@@ -463,7 +584,7 @@ function SettingsPage({ aiStatus, onChanged }: { aiStatus: AIStatus; onChanged: 
   };
   const test = async () => {
     setBusy(true); setMessage("正在请求模型...");
-    try { const result = await api.testAI(); await onChanged(); setMessage(`连接成功，响应耗时 ${result.latencyMs} ms。`); }
+    try { const result = await api.testAI(); await onChanged(); setMessage(`连接成功，响应耗时 ${result.latencyMs} ms；实际端点：${result.status.resolvedEndpoint}`); }
     catch (caught) { setMessage(caught instanceof Error ? caught.message : "连接测试失败"); }
     finally { setBusy(false); }
   };
@@ -472,7 +593,7 @@ function SettingsPage({ aiStatus, onChanged }: { aiStatus: AIStatus; onChanged: 
       <PageHeader title="设置" subtitle="连接真实 AI、查看本地数据和采集边界" actions={<Tag tone={aiStatus.configured ? "green" : "amber"} icon={Bot}>{aiStatus.configured ? "AI 已配置" : "AI 未配置"}</Tag>} />
       <div className="settings-grid">
         <section className="surface ai-settings">
-          <div className="section-heading"><div><h2>AI 模型连接</h2><p>支持 OpenAI、OpenAI-compatible 和本地 Ollama 的 `/v1/chat/completions`</p></div><Bot size={21} /></div>
+          <div className="section-heading"><div><h2>AI 模型连接</h2><p>支持填写服务域名、`/v1` Base URL 或完整 `/chat/completions` 地址</p></div><Bot size={21} /></div>
           <form onSubmit={save}>
             <label><span>API Base URL</span><input type="url" required value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} placeholder="https://api.openai.com/v1" /></label>
             <label><span>模型名称</span><input required value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} placeholder="gpt-5-mini" /></label>
@@ -480,7 +601,7 @@ function SettingsPage({ aiStatus, onChanged }: { aiStatus: AIStatus; onChanged: 
             <div className="settings-actions"><Button icon={Check} disabled={busy}>应用配置</Button><Button type="button" icon={Zap} variant="secondary" disabled={busy || !aiStatus.configured} onClick={() => void test()}>测试连接</Button></div>
           </form>
           {message ? <div className={`settings-message ${/失败|错误/.test(message) ? "error" : ""}`}>{message}</div> : null}
-          <dl className="connection-details"><div><dt>提供方</dt><dd>{aiStatus.providerLabel}</dd></div><div><dt>模型</dt><dd>{aiStatus.model || "未设置"}</dd></div><div><dt>配置来源</dt><dd>{aiStatus.source === "environment" ? ".env" : aiStatus.source === "runtime" ? "当前进程" : "未配置"}</dd></div><div><dt>上次测试</dt><dd>{aiStatus.lastCheckedAt ? new Date(aiStatus.lastCheckedAt).toLocaleString("zh-CN") : "尚未测试"}</dd></div></dl>
+          <dl className="connection-details"><div><dt>提供方</dt><dd>{aiStatus.providerLabel}</dd></div><div><dt>模型</dt><dd>{aiStatus.model || "未设置"}</dd></div><div><dt>实际端点</dt><dd>{aiStatus.resolvedEndpoint || "测试后自动识别"}</dd></div><div><dt>配置来源</dt><dd>{aiStatus.source === "environment" ? ".env" : aiStatus.source === "runtime" ? "当前进程" : "未配置"}</dd></div><div><dt>上次测试</dt><dd>{aiStatus.lastCheckedAt ? new Date(aiStatus.lastCheckedAt).toLocaleString("zh-CN") : "尚未测试"}</dd></div></dl>
         </section>
         <aside className="settings-side">
           <section className="surface"><div className="section-heading"><div><h2>数据与隐私</h2><p>默认仅保存在当前电脑</p></div><ShieldCheck size={20} /></div><dl className="detail-list"><div><dt>数据库</dt><dd>data/jobpilot.db</dd></div><div><dt>原始简历</dt><dd>data/uploads</dd></div><div><dt>模型传输</dt><dd>不发送手机号与邮箱</dd></div></dl></section>
@@ -506,7 +627,7 @@ export default function App() {
   const [variants, setVariants] = useState<ResumeVariant[]>([]);
   const [applications, setApplications] = useState<Array<Record<string, unknown>>>([]);
   const [sources, setSources] = useState<SourceDefinition[]>([]);
-  const [aiStatus, setAIStatus] = useState<AIStatus>({ configured: false, baseUrl: "", model: "", providerLabel: "AI", source: "none", lastCheckedAt: "", lastError: "" });
+  const [aiStatus, setAIStatus] = useState<AIStatus>({ configured: false, baseUrl: "", resolvedEndpoint: "", model: "", providerLabel: "AI", source: "none", lastCheckedAt: "", lastError: "" });
 
   const refresh = useCallback(async () => {
     setError("");

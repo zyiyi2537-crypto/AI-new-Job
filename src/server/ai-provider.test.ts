@@ -6,10 +6,10 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("AI provider", () => {
   it("uses an OpenAI-compatible chat completion for connection tests", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ choices: [{ message: { content: '{"ok":true}' } }] }),
-    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
     vi.stubGlobal("fetch", fetchMock);
     configureAI({ baseUrl: "https://models.example.com/v1", apiKey: "test-key", model: "test-model" });
 
@@ -17,13 +17,26 @@ describe("AI provider", () => {
 
     expect(result.ok).toBe(true);
     expect(getAIStatus().configured).toBe(true);
+    expect(result.status.resolvedEndpoint).toBe("https://models.example.com/v1/chat/completions");
     expect(fetchMock).toHaveBeenCalledWith("https://models.example.com/v1/chat/completions", expect.objectContaining({ method: "POST" }));
   });
 
+  it("discovers /v1/chat/completions when a provider base domain serves HTML", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("<html>provider console</html>", { status: 200, headers: { "Content-Type": "text/html" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    configureAI({ baseUrl: "https://models.example.com", apiKey: "test-key", model: "test-model" });
+
+    const result = await testAIConnection();
+
+    expect(result.status.resolvedEndpoint).toBe("https://models.example.com/v1/chat/completions");
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "https://models.example.com/chat/completions", expect.any(Object));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "https://models.example.com/v1/chat/completions", expect.any(Object));
+  });
+
   it("adds validated model explanations without replacing deterministic scores", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ choices: [{ message: { content: JSON.stringify({
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
         summary: "岗位需要的数据分析能力在候选人的项目经历中有直接证据。",
         strengths: ["工作经历中明确使用 SQL 和 Excel 完成数据分析"],
         gaps: ["当前材料没有 Power BI 的直接使用证据"],
@@ -34,8 +47,7 @@ describe("AI provider", () => {
           preference: "当前方向与数据分析岗位相关",
           quality: "JD 职责与要求较清晰",
         },
-      }) } }] }),
-    }));
+      }) } }] }), { status: 200 })));
     configureAI({ baseUrl: "https://models.example.com/v1", apiKey: "test-key", model: "test-model" });
     const master: ResumeMasterData = {
       basics: { name: "张明", title: "数据分析师", email: "a@example.com", phone: "13800138000", location: "杭州", summary: "" },

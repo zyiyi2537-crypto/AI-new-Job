@@ -32,6 +32,7 @@ const environmentConfig: AIConfig = {
 let activeConfig = { ...environmentConfig };
 let lastCheckedAt = "";
 let lastError = "";
+let resolvedEndpoint = "";
 
 function providerLabel(baseUrl: string): string {
   if (/api\.openai\.com/i.test(baseUrl)) return "OpenAI";
@@ -48,6 +49,7 @@ export function getAIStatus(): AIStatus {
   return {
     configured: isConfigured(),
     baseUrl: activeConfig.baseUrl,
+    resolvedEndpoint,
     model: activeConfig.model,
     providerLabel: providerLabel(activeConfig.baseUrl),
     source: isConfigured() ? activeConfig.source : "none",
@@ -69,14 +71,16 @@ export function configureAI(input: { baseUrl: string; apiKey?: string; model: st
     source: "runtime",
   };
   lastError = "";
+  resolvedEndpoint = "";
   return getAIStatus();
 }
 
 function extractMessageContent(payload: unknown): string {
   const parsed = z.object({
     choices: z.array(z.object({ message: z.object({ content: z.union([z.string(), z.array(z.object({ text: z.string() }))]) }) })).min(1),
-  }).parse(payload);
-  const content = parsed.choices[0].message.content;
+  }).safeParse(payload);
+  if (!parsed.success) throw new Error("模型接口返回成功，但没有 choices[0].message.content；请检查 API 地址是否包含 /v1");
+  const content = parsed.data.choices[0].message.content;
   return typeof content === "string" ? content : content.map((item) => item.text).join("");
 }
 
@@ -85,32 +89,73 @@ function parseJsonContent(content: string): unknown {
   return JSON.parse(normalized);
 }
 
+function endpointCandidates(baseUrl: string): string[] {
+  const normalized = baseUrl.replace(/\/+$/, "");
+  if (/\/chat\/completions$/i.test(normalized)) return [normalized];
+  if (/\/v\d+$/i.test(normalized)) return [`${normalized}/chat/completions`];
+  return [`${normalized}/chat/completions`, `${normalized}/v1/chat/completions`];
+}
+
+function errorMessage(payload: unknown, status: number): string {
+  const parsed = z.object({
+    error: z.union([z.string(), z.object({ message: z.string().optional() })]).optional(),
+    message: z.string().optional(),
+  }).safeParse(payload);
+  if (!parsed.success) return `AI 请求失败 (${status})`;
+  if (typeof parsed.data.error === "string") return parsed.data.error;
+  return parsed.data.error?.message || parsed.data.message || `AI 请求失败 (${status})`;
+}
+
+async function requestCompletion(endpoint: string, system: string, user: string, includeResponseFormat: boolean, signal: AbortSignal): Promise<string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (activeConfig.apiKey) headers.Authorization = `Bearer ${activeConfig.apiKey}`;
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers,
+    signal,
+    body: JSON.stringify({
+      model: activeConfig.model,
+      messages: [{ role: "system", content: system }, { role: "user", content: user }],
+      ...(includeResponseFormat ? { response_format: { type: "json_object" } } : {}),
+    }),
+  });
+  const raw = await response.text();
+  let payload: unknown = {};
+  try { payload = JSON.parse(raw); } catch { /* HTML and plain-text responses are handled below. */ }
+  if (!response.ok) {
+    const message = errorMessage(payload, response.status);
+    if (includeResponseFormat && [400, 422].includes(response.status) && /response[_ -]?format|json[_ -]?object/i.test(`${message} ${raw}`)) {
+      return requestCompletion(endpoint, system, user, false, signal);
+    }
+    throw Object.assign(new Error(message), { status: response.status });
+  }
+  return extractMessageContent(payload);
+}
+
 async function chatJson(system: string, user: string): Promise<unknown> {
   if (!isConfigured()) throw new Error("AI 尚未配置，请先在设置中填写模型连接信息");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60_000);
   try {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (activeConfig.apiKey) headers.Authorization = `Bearer ${activeConfig.apiKey}`;
-    const response = await fetch(`${activeConfig.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers,
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: activeConfig.model,
-        messages: [{ role: "system", content: system }, { role: "user", content: user }],
-        response_format: { type: "json_object" },
-      }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const detail = z.object({ error: z.object({ message: z.string() }).optional() }).safeParse(payload);
-      throw new Error(detail.success && detail.data.error?.message ? detail.data.error.message : `AI 请求失败 (${response.status})`);
+    const candidates = endpointCandidates(activeConfig.baseUrl);
+    let lastCandidateError: Error | null = null;
+    for (const [index, endpoint] of candidates.entries()) {
+      try {
+        const content = await requestCompletion(endpoint, system, user, true, controller.signal);
+        resolvedEndpoint = endpoint;
+        return parseJsonContent(content);
+      } catch (error) {
+        lastCandidateError = error instanceof Error ? error : new Error("AI 请求失败");
+        const status = "status" in lastCandidateError ? Number(lastCandidateError.status) : 0;
+        const mayTryVersionedEndpoint = index < candidates.length - 1 && (status === 0 || status === 404 || status === 405 || /没有 choices/.test(lastCandidateError.message));
+        if (!mayTryVersionedEndpoint) throw lastCandidateError;
+      }
     }
-    return parseJsonContent(extractMessageContent(payload));
+    throw lastCandidateError || new Error("AI 请求失败");
   } catch (error) {
-    lastError = error instanceof Error ? error.message : "AI 请求失败";
-    throw error;
+    const normalized = error instanceof Error && error.name === "AbortError" ? new Error("AI 请求超过 60 秒，请检查模型服务") : error;
+    lastError = normalized instanceof Error ? normalized.message : "AI 请求失败";
+    throw normalized;
   } finally {
     clearTimeout(timeout);
   }

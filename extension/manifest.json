@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JobPilot CN 岗位采集助手",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "将当前招聘页面中用户可见的岗位保存到本机 JobPilot CN。",
   "permissions": ["activeTab", "scripting"],
   "host_permissions": ["http://127.0.0.1:8787/*"],

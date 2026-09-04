@@ -126,6 +126,7 @@ export interface SourceDefinition {
 export interface AIStatus {
   configured: boolean;
   baseUrl: string;
+  resolvedEndpoint: string;
   model: string;
   providerLabel: string;
   source: "environment" | "runtime" | "none";

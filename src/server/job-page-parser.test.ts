@@ -26,6 +26,7 @@ describe("job page parser", () => {
     expect(detectSource("https://www.zhipin.com/job_detail/abc.html")).toBe("boss");
     const links = buildSearchLinks("数据分析师", "上海");
     expect(links).toHaveLength(4);
+    expect(links.find((item) => item.id === "boss")?.url).toContain("city=101020100");
     expect(links.find((item) => item.id === "zhaopin")?.url).toContain(encodeURIComponent("数据分析师"));
   });
 });
