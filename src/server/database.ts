@@ -73,6 +73,9 @@ db.exec(`
     missing_keywords_json TEXT NOT NULL,
     strengths_json TEXT NOT NULL,
     gaps_json TEXT NOT NULL,
+    analysis_mode TEXT NOT NULL DEFAULT 'rules',
+    ai_model TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
   );
 
@@ -102,6 +105,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_variants_job ON resume_variants(job_id, created_at DESC);
 `);
 
+function ensureColumn(table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Row[];
+  if (!columns.some((entry) => String(entry.name) === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+ensureColumn("match_analyses", "analysis_mode", "TEXT NOT NULL DEFAULT 'rules'");
+ensureColumn("match_analyses", "ai_model", "TEXT NOT NULL DEFAULT ''");
+ensureColumn("match_analyses", "summary", "TEXT NOT NULL DEFAULT ''");
+
 const now = () => new Date().toISOString();
 
 function json<T>(value: unknown, fallback: T): T {
@@ -127,6 +139,9 @@ function mapAnalysis(row?: Row): MatchAnalysis | undefined {
     missingKeywords: json<string[]>(row.missing_keywords_json, []),
     strengths: json<string[]>(row.strengths_json, []),
     gaps: json<string[]>(row.gaps_json, []),
+    analysisMode: String(row.analysis_mode || "rules") as MatchAnalysis["analysisMode"],
+    aiModel: String(row.ai_model || ""),
+    summary: String(row.summary || ""),
     createdAt: String(row.created_at),
   };
 }
@@ -276,7 +291,7 @@ export function getJob(id: number): Job | null {
 export function saveAnalysis(masterId: number, analysis: Omit<MatchAnalysis, "id" | "createdAt">): MatchAnalysis {
   const createdAt = now();
   const result = db
-    .prepare(`INSERT INTO match_analyses(job_id,master_id,total_score,confidence,verdict,dimensions_json,matched_keywords_json,missing_keywords_json,strengths_json,gaps_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`)
+    .prepare(`INSERT INTO match_analyses(job_id,master_id,total_score,confidence,verdict,dimensions_json,matched_keywords_json,missing_keywords_json,strengths_json,gaps_json,analysis_mode,ai_model,summary,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(
       analysis.jobId,
       masterId,
@@ -288,6 +303,9 @@ export function saveAnalysis(masterId: number, analysis: Omit<MatchAnalysis, "id
       JSON.stringify(analysis.missingKeywords),
       JSON.stringify(analysis.strengths),
       JSON.stringify(analysis.gaps),
+      analysis.analysisMode,
+      analysis.aiModel,
+      analysis.summary,
       createdAt,
     );
   db.prepare("UPDATE jobs SET status=? WHERE id=?").run(analysis.verdict === "recommended" ? "shortlisted" : "analyzed", analysis.jobId);

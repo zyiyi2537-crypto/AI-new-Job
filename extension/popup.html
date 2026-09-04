@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JobPilot CN 采集助手</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <span class="mark">JP</span>
+      <div><strong>JobPilot CN</strong><small>岗位采集助手</small></div>
+      <i id="health" title="本地服务状态"></i>
+    </header>
+    <main>
+      <p>读取当前标签页中可见的岗位信息，并保存到本机岗位库。</p>
+      <button id="capture" class="primary">采集当前岗位</button>
+      <button id="scan">扫描当前列表</button>
+      <div id="status" role="status">正在连接本地工作台...</div>
+    </main>
+    <footer><a href="http://127.0.0.1:8787/" target="_blank">打开工作台</a><span>最终投递由你确认</span></footer>
+    <script src="popup.js"></script>
+  </body>
+</html>

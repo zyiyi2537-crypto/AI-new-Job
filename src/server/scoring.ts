@@ -100,6 +100,9 @@ export function scoreJob(job: Job, master: ResumeMasterData): Omit<MatchAnalysis
     missingKeywords,
     strengths: matchedKeywords.slice(0, 6).map((skill) => `简历中已有 ${skill} 相关证据`),
     gaps: missingKeywords.slice(0, 6).map((skill) => `岗位提到 ${skill}，当前简历未找到直接证据`),
+    analysisMode: "rules",
+    aiModel: "",
+    summary: totalScore >= 75 ? "规则评分显示岗位与当前简历匹配度较高。" : totalScore >= 55 ? "岗位具备部分匹配证据，建议核对关键缺口。" : "当前简历对该岗位的直接证据较少。",
   };
 }
 

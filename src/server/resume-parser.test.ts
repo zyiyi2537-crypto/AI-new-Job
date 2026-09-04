@@ -23,4 +23,13 @@ describe("structureResume", () => {
     expect(resume.sections.length).toBeGreaterThan(0);
     expect(resume.sourceText).toContain("Python");
   });
+
+  it("handles line-oriented PDF text with spaced Chinese names and alternate headings", () => {
+    const resume = structureResume(`1 / 2\n李 雷\nAI 应用工程师\n手机：13900000000 邮箱：candidate@example.test\n核心 能力\n大模型应用与 RAG 后端开发\n工作 经历\n示例科技有限公司｜AI 工程师 2026.01 – 至今\n• 完成大模型 API 接入和接口联调\n项目 经历\n企业知识平台｜文档 RAG 检索项目\n• 使用 FastAPI、MySQL 和 Chroma 构建检索链路\n教育 与成果\n示例大学｜软件工程｜本科 2022 – 2026`);
+
+    expect(resume.basics.name).toBe("李雷");
+    expect(resume.basics.title).toBe("AI 应用工程师");
+    expect(resume.sections.map((section) => section.type)).toEqual(expect.arrayContaining(["skills", "experience", "projects", "education"]));
+    expect(resume.sourceText).not.toContain("1 / 2");
+  });
 });

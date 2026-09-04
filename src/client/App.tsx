@@ -2,21 +2,28 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
+  ArrowUpRight,
   BarChart3,
+  Bot,
   BriefcaseBusiness,
   Check,
   ChevronRight,
   CircleHelp,
+  ClipboardCheck,
+  Copy,
   Database,
+  ExternalLink,
   FileCheck2,
   FileText,
   FolderSearch,
   Gauge,
+  KeyRound,
   LayoutDashboard,
-  ListFilter,
+  Link2,
   LoaderCircle,
   Menu,
   Plus,
+  Radar,
   RefreshCw,
   Search,
   Settings,
@@ -26,16 +33,18 @@ import {
   UserRound,
   WandSparkles,
   X,
+  Zap,
+  type LucideIcon,
 } from "lucide-react";
-import type { Job, Overview, ResumeMaster, ResumeMasterData, ResumeVariant, SourceDefinition } from "../shared/types";
+import type { AIStatus, Job, Overview, ResumeMaster, ResumeMasterData, ResumeVariant, SearchLink, SourceDefinition } from "../shared/types";
 import { api } from "./api";
 
 type Page = "overview" | "resume" | "discover" | "jobs" | "variants" | "applications" | "settings";
 
-const navItems: Array<{ id: Page; label: string; icon: typeof LayoutDashboard }> = [
+const navItems: Array<{ id: Page; label: string; icon: LucideIcon }> = [
   { id: "overview", label: "总览", icon: LayoutDashboard },
   { id: "resume", label: "简历母版", icon: UserRound },
-  { id: "discover", label: "岗位发现", icon: FolderSearch },
+  { id: "discover", label: "岗位发现", icon: Radar },
   { id: "jobs", label: "岗位库", icon: BriefcaseBusiness },
   { id: "variants", label: "简历版本", icon: FileCheck2 },
   { id: "applications", label: "投递看板", icon: BarChart3 },
@@ -59,7 +68,7 @@ const statusLabels: Record<string, string> = {
   closed: "已结束",
 };
 
-function Button({ children, icon: Icon, variant = "primary", className = "", ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { icon?: typeof Plus; variant?: "primary" | "secondary" | "ghost" | "danger" }) {
+function Button({ children, icon: Icon, variant = "primary", className = "", ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { icon?: LucideIcon; variant?: "primary" | "secondary" | "ghost" | "danger" }) {
   return (
     <button className={`button button-${variant} ${className}`} {...props}>
       {Icon ? <Icon size={16} aria-hidden="true" /> : null}
@@ -68,19 +77,25 @@ function Button({ children, icon: Icon, variant = "primary", className = "", ...
   );
 }
 
-function IconButton({ label, icon: Icon, className = "", ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { label: string; icon: typeof Plus }) {
+function IconButton({ label, icon: Icon, className = "", ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { label: string; icon: LucideIcon }) {
   return <button className={`icon-button ${className}`} title={label} aria-label={label} {...props}><Icon size={18} /></button>;
 }
 
-function EmptyState({ icon: Icon, title, body, action }: { icon: typeof FileText; title: string; body: string; action?: React.ReactNode }) {
+function Tag({ children, tone = "neutral", icon: Icon }: { children: React.ReactNode; tone?: "green" | "amber" | "red" | "blue" | "neutral"; icon?: LucideIcon }) {
+  return <span className={`tag tag-${tone}`}>{Icon ? <Icon size={12} /> : null}{children}</span>;
+}
+
+function PageHeader({ title, subtitle, actions }: { title: string; subtitle: string; actions?: React.ReactNode }) {
   return (
-    <div className="empty-state">
-      <Icon size={30} aria-hidden="true" />
-      <h3>{title}</h3>
-      <p>{body}</p>
-      {action}
-    </div>
+    <header className="page-header">
+      <div><h1>{title}</h1><p>{subtitle}</p></div>
+      {actions ? <div className="page-actions">{actions}</div> : null}
+    </header>
   );
+}
+
+function EmptyState({ icon: Icon, title, body, action }: { icon: LucideIcon; title: string; body: string; action?: React.ReactNode }) {
+  return <div className="empty-state"><Icon size={30} /><h3>{title}</h3><p>{body}</p>{action}</div>;
 }
 
 function ResumeUpload({ onUploaded, compact = false }: { onUploaded: (master: ResumeMaster) => void; compact?: boolean }) {
@@ -88,7 +103,6 @@ function ResumeUpload({ onUploaded, compact = false }: { onUploaded: (master: Re
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-
   const upload = async (file?: File) => {
     if (!file) return;
     setBusy(true);
@@ -102,7 +116,6 @@ function ResumeUpload({ onUploaded, compact = false }: { onUploaded: (master: Re
       setBusy(false);
     }
   };
-
   return (
     <div
       className={`upload-zone ${dragging ? "is-dragging" : ""} ${compact ? "is-compact" : ""}`}
@@ -112,9 +125,9 @@ function ResumeUpload({ onUploaded, compact = false }: { onUploaded: (master: Re
     >
       <input ref={inputRef} type="file" accept=".pdf,.docx,.md,.txt,.json" hidden onChange={(event) => void upload(event.target.files?.[0])} />
       <div className="upload-icon">{busy ? <LoaderCircle className="spin" size={24} /> : <Upload size={24} />}</div>
-      <div>
-        <h3>{busy ? "正在解析简历" : compact ? "上传新版原始简历" : "上传你的现有简历"}</h3>
-        <p>{compact ? "系统会识别差异，不会覆盖历史版本" : "PDF、DOCX、Markdown、TXT 或 JSON，最大 10 MB"}</p>
+      <div className="upload-copy">
+        <h3>{busy ? "正在解析简历" : compact ? "上传新版简历" : "把现有简历拖到这里"}</h3>
+        <p>{compact ? "创建新母版版本，历史版本继续保留" : "PDF、DOCX、Markdown、TXT、JSON，最大 10 MB"}</p>
       </div>
       <Button icon={Upload} variant="secondary" disabled={busy} onClick={() => inputRef.current?.click()}>{busy ? "处理中" : "选择文件"}</Button>
       {error ? <div className="inline-error"><AlertTriangle size={15} />{error}</div> : null}
@@ -126,22 +139,22 @@ function FirstRun({ onUploaded }: { onUploaded: (master: ResumeMaster) => void }
   return (
     <main className="onboarding">
       <header className="onboarding-header">
-        <div className="brand-mark"><BriefcaseBusiness size={21} /></div>
+        <div className="brand-mark"><BriefcaseBusiness size={20} /></div>
         <div><strong>JobPilot CN</strong><span>本地 AI 求职工作台</span></div>
+        <Tag tone="green" icon={ShieldCheck}>本地数据</Tag>
       </header>
       <section className="onboarding-main">
         <div className="onboarding-copy">
-          <div className="eyebrow">第一步 / 建立简历母版</div>
-          <h1>从你已有的简历开始</h1>
-          <p>系统自动提取教育、工作、项目和技能。你只需要校对识别结果，不必重新填写整份资料。</p>
-          <div className="trust-row"><ShieldCheck size={18} /><span>文件和解析结果仅保存在本机</span></div>
+          <span className="eyebrow">建立可信事实底稿</span>
+          <h1>上传一份简历，开始筛选真实岗位</h1>
+          <p>系统会提取教育、工作、项目与技能。后续每份岗位简历都从这份事实母版派生，不要求你重新填写整套资料。</p>
         </div>
         <ResumeUpload onUploaded={onUploaded} />
-        <div className="process-strip" aria-label="导入流程">
-          <span><b>1</b> 上传原始简历</span><ChevronRight size={16} />
-          <span><b>2</b> 自动解析</span><ChevronRight size={16} />
-          <span><b>3</b> 校对关键信息</span><ChevronRight size={16} />
-          <span><b>4</b> 开始匹配岗位</span>
+        <div className="process-strip">
+          <span><b>01</b> 上传并解析</span><ChevronRight size={15} />
+          <span><b>02</b> 导入岗位</span><ChevronRight size={15} />
+          <span><b>03</b> 规则与 AI 分析</span><ChevronRight size={15} />
+          <span><b>04</b> 人工确认投递</span>
         </div>
       </section>
     </main>
@@ -173,42 +186,41 @@ function ResumeDocument({ data, dense = false }: { data: ResumeMasterData; dense
   );
 }
 
-function PageHeader({ title, subtitle, actions }: { title: string; subtitle: string; actions?: React.ReactNode }) {
-  return <div className="page-header"><div><h1>{title}</h1><p>{subtitle}</p></div>{actions ? <div className="page-actions">{actions}</div> : null}</div>;
-}
-
-function OverviewPage({ overview, master, jobs, onNavigate }: { overview: Overview; master: ResumeMaster; jobs: Job[]; onNavigate: (page: Page) => void }) {
-  const high = jobs.filter((job) => (job.analysis?.totalScore || 0) >= 75).slice(0, 4);
+function OverviewPage({ overview, master, jobs, aiStatus, onNavigate }: { overview: Overview; master: ResumeMaster; jobs: Job[]; aiStatus: AIStatus; onNavigate: (page: Page) => void }) {
+  const priority = [...jobs].filter((job) => job.analysis).sort((a, b) => (b.analysis?.totalScore || 0) - (a.analysis?.totalScore || 0)).slice(0, 5);
   return (
     <>
-      <PageHeader title="求职总览" subtitle="查看岗位筛选和简历定制进度" actions={<Button icon={FolderSearch} onClick={() => onNavigate("discover")}>发现岗位</Button>} />
-      <div className="metrics-row">
-        <div className="metric"><span>岗位总数</span><strong>{overview.jobs}</strong><small>已导入的岗位</small></div>
-        <div className="metric"><span>已完成评分</span><strong>{overview.analyzed}</strong><small>包含推荐岗位</small></div>
-        <div className="metric accent"><span>高匹配岗位</span><strong>{overview.shortlisted}</strong><small>建议优先处理</small></div>
-        <div className="metric"><span>定制简历</span><strong>{overview.variants}</strong><small>按岗位独立保存</small></div>
-      </div>
+      <PageHeader title="求职总览" subtitle="从岗位进入、匹配分析到投递结果的统一工作区" actions={<Button icon={Radar} onClick={() => onNavigate("discover")}>发现岗位</Button>} />
+      <section className="metric-band">
+        <div><span>岗位池</span><strong>{overview.jobs}</strong><small>已去重入库</small></div>
+        <div><span>已分析</span><strong>{overview.analyzed}</strong><small>规则或 AI</small></div>
+        <div className="metric-focus"><span>高匹配</span><strong>{overview.shortlisted}</strong><small>建议优先处理</small></div>
+        <div><span>岗位简历</span><strong>{overview.variants}</strong><small>独立版本</small></div>
+        <div><span>AI 引擎</span><strong className="metric-text">{aiStatus.configured ? "在线" : "未配置"}</strong><small>{aiStatus.configured ? aiStatus.model : "规则模式可用"}</small></div>
+      </section>
       <div className="dashboard-grid">
-        <section className="workspace-section">
-          <div className="section-heading"><div><h2>优先岗位</h2><p>按当前简历母版的匹配分排序</p></div><Button variant="ghost" onClick={() => onNavigate("jobs")}>查看全部</Button></div>
-          {high.length ? <div className="priority-list">{high.map((job) => <div className="priority-row" key={job.id}><div className="score-ring">{job.analysis?.totalScore}</div><div className="grow"><strong>{job.title}</strong><span>{job.company} · {job.location || "地点未提供"}</span></div><span className="tag tag-green">推荐</span></div>)}</div> : <EmptyState icon={Gauge} title="还没有高匹配岗位" body="导入岗位并运行评分后，优先岗位会显示在这里。" />}
+        <section className="surface priority-panel">
+          <div className="section-heading"><div><h2>优先队列</h2><p>按最近一次匹配得分排序</p></div><Button variant="ghost" onClick={() => onNavigate("jobs")}>全部岗位</Button></div>
+          {priority.length ? <div className="priority-list">{priority.map((job) => (
+            <button className="priority-row" key={job.id} onClick={() => onNavigate("jobs")}>
+              <span className={`score-number ${(job.analysis?.totalScore || 0) >= 75 ? "good" : "medium"}`}>{job.analysis?.totalScore}</span>
+              <span className="grow"><strong>{job.title}</strong><small>{job.company} · {job.location || "地点待确认"}</small></span>
+              <Tag tone={job.analysis?.analysisMode === "ai" ? "blue" : "neutral"} icon={job.analysis?.analysisMode === "ai" ? Bot : Gauge}>{job.analysis?.analysisMode === "ai" ? "AI" : "规则"}</Tag>
+              <ArrowRight size={16} />
+            </button>
+          ))}</div> : <EmptyState icon={Gauge} title="还没有分析结果" body="导入岗位后运行规则评分或 AI 深度分析。" action={<Button variant="secondary" onClick={() => onNavigate("discover")}>导入岗位</Button>} />}
         </section>
-        <section className="workspace-section">
-          <div className="section-heading"><div><h2>当前简历母版</h2><p>版本 {master.version} · {master.sourceFilename}</p></div><Button variant="ghost" onClick={() => onNavigate("resume")}>查看母版</Button></div>
-          <div className="master-summary">
-            <div className="avatar-letter">{master.data.basics.name.slice(0, 1)}</div>
-            <div><strong>{master.data.basics.name}</strong><span>{master.data.basics.title || "待确认目标职位"}</span></div>
-          </div>
-          <dl className="compact-stats"><div><dt>章节</dt><dd>{master.data.sections.length}</dd></div><div><dt>经历条目</dt><dd>{master.data.sections.reduce((sum, section) => sum + section.items.length, 0)}</dd></div><div><dt>导入日期</dt><dd>{new Date(master.createdAt).toLocaleDateString("zh-CN")}</dd></div></dl>
-        </section>
+        <aside className="surface control-panel">
+          <div className="section-heading"><div><h2>当前母版</h2><p>v{master.version} · {master.sourceFilename}</p></div><Tag tone="green" icon={Check}>可用</Tag></div>
+          <div className="profile-line"><div className="avatar-letter">{master.data.basics.name.slice(0, 1)}</div><div><strong>{master.data.basics.name}</strong><span>{master.data.basics.title || "目标职位待确认"}</span></div></div>
+          <dl className="detail-list compact"><div><dt>章节</dt><dd>{master.data.sections.length}</dd></div><div><dt>经历条目</dt><dd>{master.data.sections.reduce((sum, section) => sum + section.items.length, 0)}</dd></div><div><dt>更新时间</dt><dd>{new Date(master.createdAt).toLocaleDateString("zh-CN")}</dd></div></dl>
+          <Button variant="secondary" className="full-button" onClick={() => onNavigate("resume")}>检查简历母版</Button>
+        </aside>
       </div>
-      <section className="workspace-section next-actions">
-        <div className="section-heading"><div><h2>建议动作</h2><p>按当前数据状态生成</p></div></div>
-        <div className="action-row">
-          <button onClick={() => onNavigate("discover")}><FolderSearch size={19} /><span><strong>导入目标岗位</strong><small>粘贴 JD 或载入示例岗位</small></span><ArrowRight size={17} /></button>
-          <button onClick={() => onNavigate("jobs")}><Sparkles size={19} /><span><strong>运行岗位评分</strong><small>查看证据、缺口与风险</small></span><ArrowRight size={17} /></button>
-          <button onClick={() => onNavigate("variants")}><FileCheck2 size={19} /><span><strong>审阅定制简历</strong><small>每个岗位保存独立版本</small></span><ArrowRight size={17} /></button>
-        </div>
+      <section className="next-band">
+        <button onClick={() => onNavigate("discover")}><Radar size={19} /><span><strong>采集岗位</strong><small>搜索平台、URL 或 Chrome 助手</small></span><ArrowRight size={16} /></button>
+        <button onClick={() => onNavigate("jobs")}><Sparkles size={19} /><span><strong>深度分析</strong><small>查看证据、缺口与 AI 解释</small></span><ArrowRight size={16} /></button>
+        <button onClick={() => onNavigate("applications")}><ClipboardCheck size={19} /><span><strong>推进投递</strong><small>人工确认并记录结果</small></span><ArrowRight size={16} /></button>
       </section>
     </>
   );
@@ -217,54 +229,132 @@ function OverviewPage({ overview, master, jobs, onNavigate }: { overview: Overvi
 function ResumePage({ master, onUploaded }: { master: ResumeMaster; onUploaded: (master: ResumeMaster) => void }) {
   return (
     <>
-      <PageHeader title="简历母版" subtitle="所有岗位版本都从这份已上传的事实底稿派生" />
-      <div className="split-layout resume-layout">
-        <section className="workspace-section source-panel">
-          <div className="section-heading"><div><h2>原始资料</h2><p>当前版本及解析状态</p></div><span className="tag tag-green"><Check size={13} />已解析</span></div>
-          <dl className="detail-list"><div><dt>文件</dt><dd>{master.sourceFilename}</dd></div><div><dt>母版版本</dt><dd>v{master.version}</dd></div><div><dt>导入时间</dt><dd>{new Date(master.createdAt).toLocaleString("zh-CN")}</dd></div><div><dt>章节数量</dt><dd>{master.data.sections.length}</dd></div></dl>
+      <PageHeader title="简历母版" subtitle="岗位分析和定制版本使用的事实来源" actions={<Tag tone="green" icon={ShieldCheck}>本地保存</Tag>} />
+      <div className="resume-workbench">
+        <aside className="surface source-panel">
+          <div className="section-heading"><div><h2>资料来源</h2><p>解析状态与版本</p></div><Tag tone="green" icon={Check}>已解析</Tag></div>
+          <dl className="detail-list"><div><dt>文件</dt><dd>{master.sourceFilename}</dd></div><div><dt>版本</dt><dd>v{master.version}</dd></div><div><dt>导入时间</dt><dd>{new Date(master.createdAt).toLocaleString("zh-CN")}</dd></div></dl>
           <ResumeUpload compact onUploaded={onUploaded} />
-          <div className="notice"><ShieldCheck size={17} /><p>重新上传会创建新版本。已经确认的历史母版不会被静默覆盖。</p></div>
-        </section>
+          <div className="notice"><ShieldCheck size={17} /><p>上传新版会创建新母版，不静默覆盖已生成的岗位版本。</p></div>
+        </aside>
         <div className="document-stage"><ResumeDocument data={master.data} /></div>
       </div>
     </>
   );
 }
 
-function DiscoverPage({ sources, onChanged }: { sources: SourceDefinition[]; onChanged: () => Promise<void> }) {
+type ImportMode = "url" | "manual";
+
+function DiscoverPage({ sources, jobCount, onChanged }: { sources: SourceDefinition[]; jobCount: number; onChanged: () => Promise<void> }) {
+  const [query, setQuery] = useState("AI 产品经理");
+  const [city, setCity] = useState("杭州");
+  const [links, setLinks] = useState<SearchLink[]>([]);
+  const [collectorPath, setCollectorPath] = useState("D:\\toudi\\extension");
+  const [mode, setMode] = useState<ImportMode>("url");
+  const [url, setUrl] = useState("");
   const [form, setForm] = useState({ title: "", company: "", location: "", salaryText: "", url: "", description: "" });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const submit = async (event: React.FormEvent) => {
+
+  useEffect(() => {
+    void api.collectorInfo().then((info) => setCollectorPath(info.extensionPath)).catch(() => undefined);
+    void api.searchLinks(query, city).then(setLinks).catch(() => undefined);
+  }, []);
+
+  const createLinks = async (event: React.FormEvent) => {
     event.preventDefault();
-    setBusy(true); setMessage("");
+    setBusy(true);
+    setMessage("");
+    try { setLinks(await api.searchLinks(query, city)); }
+    catch (caught) { setMessage(caught instanceof Error ? caught.message : "无法生成搜索入口"); }
+    finally { setBusy(false); }
+  };
+
+  const importUrl = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("正在读取岗位页面...");
+    try {
+      const result = await api.importJobUrl(url);
+      setMessage(result.inserted ? `已导入：${result.job.title} @ ${result.job.company}` : "该岗位已存在，未重复写入。");
+      setUrl("");
+      await onChanged();
+    } catch (caught) { setMessage(caught instanceof Error ? caught.message : "URL 导入失败"); }
+    finally { setBusy(false); }
+  };
+
+  const importManual = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("");
     try {
       await api.importJob({ ...form, source: "manual", salaryMin: null, salaryMax: null, postedAt: "" });
       setForm({ title: "", company: "", location: "", salaryText: "", url: "", description: "" });
-      setMessage("岗位已导入，可以前往岗位库评分。");
+      setMessage("岗位已写入岗位库。");
       await onChanged();
     } catch (caught) { setMessage(caught instanceof Error ? caught.message : "导入失败"); }
     finally { setBusy(false); }
   };
-  const seed = async () => { setBusy(true); await api.seedJobs(); await onChanged(); setMessage("已载入两个示例岗位。"); setBusy(false); };
+
+  const copyPath = async () => {
+    await navigator.clipboard.writeText(collectorPath);
+    setMessage("扩展目录已复制。");
+  };
+
   return (
     <>
-      <PageHeader title="岗位发现" subtitle="连接招聘平台，或先粘贴一个真实 JD 验证分析流程" actions={<Button icon={Database} variant="secondary" disabled={busy} onClick={() => void seed()}>载入示例岗位</Button>} />
-      <section className="workspace-section">
-        <div className="section-heading"><div><h2>招聘平台</h2><p>平台采集器采用独立适配器，登录和故障互不影响</p></div></div>
-        <div className="source-grid">{sources.map((source) => <div className="source-row" key={source.id}><div className={`source-logo source-${source.id}`}>{source.name.slice(0, 1)}</div><div className="grow"><strong>{source.name}</strong><span>{source.note}</span><div className="capabilities">{source.capabilities.map((item) => <em key={item}>{item}</em>)}</div></div><span className={`tag ${source.status === "available" ? "tag-green" : source.status === "planned" ? "tag-muted" : "tag-amber"}`}>{source.status === "available" ? "可用" : source.status === "planned" ? "规划中" : "待接入"}</span></div>)}</div>
-      </section>
-      <section className="workspace-section form-section">
-        <div className="section-heading"><div><h2>粘贴岗位 JD</h2><p>岗位至少需要名称、公司和 20 字以上的职位描述</p></div></div>
-        <form className="job-form" onSubmit={submit}>
-          <label><span>岗位名称</span><input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="例如：AI 产品经理" /></label>
-          <label><span>公司</span><input required value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} placeholder="公司名称" /></label>
-          <label><span>城市</span><input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="杭州" /></label>
-          <label><span>薪资</span><input value={form.salaryText} onChange={(e) => setForm({ ...form, salaryText: e.target.value })} placeholder="20-35K" /></label>
-          <label className="full"><span>原始链接</span><input value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} placeholder="https://..." /></label>
-          <label className="full"><span>职位描述</span><textarea required minLength={20} rows={8} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="粘贴完整职责和任职要求" /></label>
-          <div className="form-footer"><span className="form-message">{message}</span><Button icon={Plus} disabled={busy}>{busy ? "正在导入" : "导入岗位"}</Button></div>
+      <PageHeader title="岗位发现" subtitle="从招聘网站搜索、公开链接或当前浏览器页面导入真实岗位" actions={<div className="live-count"><span className="status-dot" />岗位库已有 <b>{jobCount}</b> 条</div>} />
+      <section className="discovery-command">
+        <div className="command-heading"><Radar size={20} /><div><h2>跨平台搜索</h2><p>生成真实平台搜索入口，登录和验证留在你的浏览器中完成</p></div></div>
+        <form className="search-command" onSubmit={createLinks}>
+          <label><span>目标岗位</span><div><Search size={17} /><input required value={query} onChange={(event) => setQuery(event.target.value)} /></div></label>
+          <label><span>城市</span><div><FolderSearch size={17} /><input value={city} onChange={(event) => setCity(event.target.value)} /></div></label>
+          <Button icon={Radar} disabled={busy}>更新入口</Button>
         </form>
+        <div className="platform-launches">{links.map((link) => <a key={link.id} href={link.url} target="_blank" rel="noreferrer"><span className={`source-logo source-${link.id}`}>{link.name.slice(0, 1)}</span><span><strong>{link.name}</strong><small>打开搜索结果</small></span><ArrowUpRight size={16} /></a>)}</div>
+      </section>
+
+      <div className="discovery-grid">
+        <section className="surface source-status-panel">
+          <div className="section-heading"><div><h2>数据来源</h2><p>每种来源独立工作，失败不会影响已有岗位</p></div><Tag tone="green">4 个平台可采集</Tag></div>
+          <div className="source-table">{sources.map((source) => {
+            const link = links.find((item) => item.id === source.id);
+            return <div className="source-row" key={source.id}>
+              <span className={`source-logo source-${source.id}`}>{source.name.slice(0, 1)}</span>
+              <span className="grow"><strong>{source.name}</strong><small>{source.note}</small></span>
+              <Tag tone={source.status === "available" ? "green" : "amber"}>{source.status === "available" ? "可用" : "需登录"}</Tag>
+              {link ? <a className="icon-link" href={link.url} target="_blank" rel="noreferrer" title={`打开 ${source.name}`}><ExternalLink size={16} /></a> : null}
+            </div>;
+          })}</div>
+        </section>
+
+        <aside className="surface collector-panel">
+          <div className="section-heading"><div><h2>Chrome 采集助手</h2><p>采集已登录页面中的可见岗位</p></div><Tag tone="blue" icon={Zap}>本地桥接</Tag></div>
+          <ol className="setup-steps"><li><b>1</b><span>打开 <code>chrome://extensions/</code> 并启用开发者模式</span></li><li><b>2</b><span>加载已解压扩展，选择下方目录</span></li><li><b>3</b><span>在招聘页面点击扩展，采集当前岗位或列表</span></li></ol>
+          <div className="path-field"><code>{collectorPath}</code><IconButton icon={Copy} label="复制扩展目录" onClick={() => void copyPath()} /></div>
+          <div className="notice"><ShieldCheck size={16} /><p>扩展不读取 Cookie、密码或浏览记录，不执行自动投递。</p></div>
+        </aside>
+      </div>
+
+      <section className="surface import-panel">
+        <div className="import-tabs" role="tablist">
+          <button className={mode === "url" ? "active" : ""} onClick={() => setMode("url")}><Link2 size={15} />岗位链接</button>
+          <button className={mode === "manual" ? "active" : ""} onClick={() => setMode("manual")}><FileText size={15} />粘贴 JD</button>
+        </div>
+        {mode === "url" ? <form className="url-form" onSubmit={importUrl}>
+          <div><h2>导入公开岗位链接</h2><p>优先读取页面中的 JobPosting 结构化数据；遇到登录墙时改用 Chrome 采集助手。</p></div>
+          <label><Link2 size={17} /><input type="url" required value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://招聘网站/岗位详情" /></label>
+          <Button icon={ArrowRight} disabled={busy}>{busy ? "读取中" : "读取并入库"}</Button>
+        </form> : <form className="job-form" onSubmit={importManual}>
+          <label><span>岗位名称</span><input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="例如：AI 产品经理" /></label>
+          <label><span>公司</span><input required value={form.company} onChange={(event) => setForm({ ...form, company: event.target.value })} placeholder="公司名称" /></label>
+          <label><span>城市</span><input value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} placeholder="杭州" /></label>
+          <label><span>薪资</span><input value={form.salaryText} onChange={(event) => setForm({ ...form, salaryText: event.target.value })} placeholder="20-35K" /></label>
+          <label className="full"><span>原始链接</span><input value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} placeholder="https://..." /></label>
+          <label className="full"><span>职位描述</span><textarea required minLength={20} rows={7} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="粘贴完整职责和任职要求" /></label>
+          <div className="form-footer"><Button icon={Plus} disabled={busy}>导入岗位</Button></div>
+        </form>}
+        {message ? <div className={`form-message ${/失败|无法|没有|错误/.test(message) ? "error" : ""}`}>{message}</div> : null}
       </section>
     </>
   );
@@ -275,23 +365,58 @@ function ScoreBadge({ score }: { score?: number }) {
   return <span className={`score-badge ${score >= 75 ? "good" : score >= 55 ? "medium" : "low"}`}>{score}</span>;
 }
 
-function JobsPage({ jobs, refresh }: { jobs: Job[]; refresh: () => Promise<void> }) {
+function JobsPage({ jobs, aiStatus, refresh, onConfigureAI }: { jobs: Job[]; aiStatus: AIStatus; refresh: () => Promise<void>; onConfigureAI: () => void }) {
   const [selectedId, setSelectedId] = useState<number | null>(jobs[0]?.id || null);
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState("");
   const [query, setQuery] = useState("");
+  const [message, setMessage] = useState("");
   useEffect(() => { if (!selectedId && jobs[0]) setSelectedId(jobs[0].id); }, [jobs, selectedId]);
   const selected = jobs.find((job) => job.id === selectedId) || null;
   const filtered = jobs.filter((job) => `${job.title}${job.company}${job.description}`.toLowerCase().includes(query.toLowerCase()));
-  const analyze = async (id: number) => { setBusy(true); try { await api.analyzeJob(id); await refresh(); } finally { setBusy(false); } };
-  const analyzeAll = async () => { setBusy(true); try { await api.analyzeAll(); await refresh(); } finally { setBusy(false); } };
-  const createVariant = async (id: number) => { setBusy(true); try { await api.createVariant(id); await refresh(); } finally { setBusy(false); } };
+
+  const analyze = async (id: number, mode: "rules" | "ai") => {
+    setBusyAction(mode);
+    setMessage(mode === "ai" ? "AI 正在结合简历证据分析岗位..." : "正在运行本地规则评分...");
+    try { await api.analyzeJob(id, mode); await refresh(); setMessage(mode === "ai" ? "AI 深度分析已完成。" : "规则评分已完成。"); }
+    catch (caught) { setMessage(caught instanceof Error ? caught.message : "分析失败"); }
+    finally { setBusyAction(""); }
+  };
+  const analyzeAll = async () => {
+    setBusyAction("batch");
+    try { await api.analyzeAll(); await refresh(); setMessage(`已完成 ${jobs.length} 个岗位的规则评分。`); }
+    catch (caught) { setMessage(caught instanceof Error ? caught.message : "批量评分失败"); }
+    finally { setBusyAction(""); }
+  };
+  const createVariant = async (id: number) => {
+    setBusyAction("variant");
+    try { await api.createVariant(id); await refresh(); setMessage("已生成岗位定制简历，可前往简历版本审阅。"); }
+    catch (caught) { setMessage(caught instanceof Error ? caught.message : "生成失败"); }
+    finally { setBusyAction(""); }
+  };
+
   return (
     <>
-      <PageHeader title="岗位库" subtitle="统一查看岗位、评分依据和简历证据缺口" actions={<Button icon={Sparkles} disabled={busy || !jobs.length} onClick={() => void analyzeAll()}>批量评分</Button>} />
-      <div className="jobs-toolbar"><div className="search-box"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索岗位或公司" /></div><div className="toolbar-count"><ListFilter size={16} />{filtered.length} 个岗位</div></div>
-      {!jobs.length ? <EmptyState icon={BriefcaseBusiness} title="岗位库还是空的" body="前往岗位发现页粘贴 JD，或载入示例岗位。" /> : <div className="jobs-layout">
-        <div className="job-table-wrap"><table className="job-table"><thead><tr><th>匹配</th><th>岗位 / 公司</th><th>地点</th><th>薪资</th><th>来源</th><th>状态</th></tr></thead><tbody>{filtered.map((job) => <tr className={selectedId === job.id ? "selected" : ""} key={job.id} onClick={() => setSelectedId(job.id)}><td><ScoreBadge score={job.analysis?.totalScore} /></td><td><strong>{job.title}</strong><span>{job.company}</span></td><td>{job.location || "--"}</td><td>{job.salaryText || "--"}</td><td>{job.source}</td><td><span className={`tag ${job.status === "shortlisted" ? "tag-green" : "tag-muted"}`}>{statusLabels[job.status]}</span></td></tr>)}</tbody></table></div>
-        {selected ? <aside className="job-detail"><div className="job-detail-header"><div><h2>{selected.title}</h2><p>{selected.company} · {selected.location || "地点未提供"}</p></div><ScoreBadge score={selected.analysis?.totalScore} /></div><div className="job-meta"><span>{selected.salaryText || "薪资未提供"}</span><span>{selected.source}</span>{selected.postedAt ? <span>{selected.postedAt}</span> : null}</div>{selected.analysis ? <><div className="verdict-line"><span className="tag tag-green">{selected.analysis.verdict === "recommended" ? "建议优先申请" : selected.analysis.verdict === "consider" ? "可进一步评估" : "暂不推荐"}</span><small>置信度 {selected.analysis.confidence}%</small></div><div className="dimension-list">{selected.analysis.dimensions.map((dimension) => <div key={dimension.key}><div><span>{dimension.label}</span><b>{dimension.score}</b></div><div className="progress"><i style={{ width: `${dimension.score}%` }} /></div><small>{dimension.reasons[0]}</small></div>)}</div><div className="keyword-block"><h3>命中证据</h3><div>{selected.analysis.matchedKeywords.length ? selected.analysis.matchedKeywords.map((item) => <span className="keyword hit" key={item}>{item}</span>) : <small>尚无直接命中</small>}</div><h3>待补证据</h3><div>{selected.analysis.missingKeywords.length ? selected.analysis.missingKeywords.map((item) => <span className="keyword missing" key={item}>{item}</span>) : <small>未识别到明显技能缺口</small>}</div></div></> : <div className="analysis-prompt"><Gauge size={26} /><h3>尚未评分</h3><p>评分会展示硬条件、技能、经历证据、方向偏好和岗位质量。</p></div>}<div className="job-description"><h3>职位描述</h3><p>{selected.description}</p></div><div className="detail-actions"><Button icon={RefreshCw} variant="secondary" disabled={busy} onClick={() => void analyze(selected.id)}>{selected.analysis ? "重新评分" : "开始评分"}</Button><Button icon={WandSparkles} disabled={busy} onClick={() => void createVariant(selected.id)}>生成岗位简历</Button></div></aside> : null}
+      <PageHeader title="岗位库" subtitle="比较岗位、规则评分和 AI 证据分析" actions={<Button icon={Gauge} variant="secondary" disabled={Boolean(busyAction) || !jobs.length} onClick={() => void analyzeAll()}>批量规则评分</Button>} />
+      <div className="jobs-toolbar"><div className="search-box"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索岗位、公司或 JD" /></div><span>{filtered.length} / {jobs.length} 个岗位</span></div>
+      {message ? <div className="action-message"><CircleHelp size={15} />{message}</div> : null}
+      {!jobs.length ? <EmptyState icon={BriefcaseBusiness} title="岗位库还是空的" body="前往岗位发现页，从真实链接或浏览器页面采集岗位。" /> : <div className="jobs-layout">
+        <div className="job-table-wrap"><table className="job-table"><thead><tr><th>匹配</th><th>岗位 / 公司</th><th>地点</th><th>薪资</th><th>来源</th><th>状态</th></tr></thead><tbody>{filtered.map((job) => <tr className={selectedId === job.id ? "selected" : ""} key={job.id} onClick={() => setSelectedId(job.id)}><td><ScoreBadge score={job.analysis?.totalScore} /></td><td><strong>{job.title}</strong><span>{job.company}</span></td><td>{job.location || "--"}</td><td>{job.salaryText || "--"}</td><td>{job.source}</td><td><Tag tone={job.status === "shortlisted" ? "green" : "neutral"}>{statusLabels[job.status]}</Tag></td></tr>)}</tbody></table></div>
+        {selected ? <aside className="job-detail">
+          <div className="job-detail-header"><div><h2>{selected.title}</h2><p>{selected.company} · {selected.location || "地点待确认"}</p></div><ScoreBadge score={selected.analysis?.totalScore} /></div>
+          <div className="job-meta"><span>{selected.salaryText || "薪资待确认"}</span><span>{selected.source}</span>{selected.url ? <a href={selected.url} target="_blank" rel="noreferrer">原岗位 <ExternalLink size={12} /></a> : null}</div>
+          {selected.analysis ? <>
+            <div className="analysis-provenance"><Tag tone={selected.analysis.analysisMode === "ai" ? "blue" : "neutral"} icon={selected.analysis.analysisMode === "ai" ? Bot : Gauge}>{selected.analysis.analysisMode === "ai" ? `AI · ${selected.analysis.aiModel}` : "本地规则"}</Tag><small>置信度 {selected.analysis.confidence}%</small></div>
+            <p className="analysis-summary">{selected.analysis.summary}</p>
+            <div className="dimension-list">{selected.analysis.dimensions.map((dimension) => <div key={dimension.key}><div><span>{dimension.label}</span><b>{dimension.score}</b></div><div className="progress"><i style={{ width: `${dimension.score}%` }} /></div><small>{dimension.reasons[0]}</small></div>)}</div>
+            <div className="evidence-columns"><div><h3>优势证据</h3>{selected.analysis.strengths.length ? <ul>{selected.analysis.strengths.map((item) => <li key={item}>{item}</li>)}</ul> : <small>暂无明确优势证据</small>}</div><div><h3>真实缺口</h3>{selected.analysis.gaps.length ? <ul>{selected.analysis.gaps.map((item) => <li key={item}>{item}</li>)}</ul> : <small>未识别到关键缺口</small>}</div></div>
+          </> : <div className="analysis-prompt"><Gauge size={27} /><h3>选择分析方式</h3><p>规则评分完全本地；AI 深度分析会把脱敏后的经历和 JD 发送到已配置模型。</p></div>}
+          <div className="job-description"><h3>职位描述</h3><p>{selected.description}</p></div>
+          <div className="detail-actions">
+            <Button icon={Gauge} variant="secondary" disabled={Boolean(busyAction)} onClick={() => void analyze(selected.id, "rules")}>{busyAction === "rules" ? "评分中" : "规则评分"}</Button>
+            {aiStatus.configured ? <Button icon={Bot} disabled={Boolean(busyAction)} onClick={() => void analyze(selected.id, "ai")}>{busyAction === "ai" ? "AI 分析中" : "AI 深度分析"}</Button> : <Button icon={KeyRound} variant="secondary" onClick={onConfigureAI}>配置 AI</Button>}
+            <Button icon={WandSparkles} variant="ghost" disabled={Boolean(busyAction)} onClick={() => void createVariant(selected.id)}>生成简历</Button>
+          </div>
+        </aside> : null}
       </div>}
     </>
   );
@@ -303,8 +428,11 @@ function VariantsPage({ variants }: { variants: ResumeVariant[] }) {
   const selected = variants.find((variant) => variant.id === selectedId) || null;
   return (
     <>
-      <PageHeader title="简历版本" subtitle="每个岗位拥有独立版本，所有修改都基于原始简历事实" />
-      {!variants.length ? <EmptyState icon={FileCheck2} title="还没有岗位定制版本" body="在岗位详情中完成评分并点击“生成岗位简历”。" /> : <div className="variants-layout"><aside className="variant-list">{variants.map((variant) => <button key={variant.id} className={selectedId === variant.id ? "active" : ""} onClick={() => setSelectedId(variant.id)}><FileText size={18} /><span><strong>{variant.jobTitle}</strong><small>{variant.company} · {new Date(variant.createdAt).toLocaleDateString("zh-CN")}</small></span><ChevronRight size={16} /></button>)}</aside>{selected ? <div className="variant-content"><section className="rationale"><div className="section-heading"><div><h2>{selected.name}</h2><p>生成依据</p></div><span className="tag tag-amber">草稿待确认</span></div><ul>{selected.rationale.map((reason) => <li key={reason}><Check size={15} />{reason}</li>)}</ul></section><div className="document-stage"><ResumeDocument data={selected.content} dense /></div></div> : null}</div>}
+      <PageHeader title="简历版本" subtitle="每个岗位独立保存，所有内容都从简历母版派生" />
+      {!variants.length ? <EmptyState icon={FileCheck2} title="还没有岗位版本" body="在岗位详情完成分析后生成该岗位的定制简历。" /> : <div className="variants-layout">
+        <aside className="variant-list">{variants.map((variant) => <button key={variant.id} className={selectedId === variant.id ? "active" : ""} onClick={() => setSelectedId(variant.id)}><FileText size={17} /><span><strong>{variant.jobTitle}</strong><small>{variant.company} · {new Date(variant.createdAt).toLocaleDateString("zh-CN")}</small></span><ChevronRight size={15} /></button>)}</aside>
+        {selected ? <div className="variant-content"><section className="surface rationale"><div className="section-heading"><div><h2>{selected.name}</h2><p>生成依据</p></div><Tag tone="amber">草稿待确认</Tag></div><ul>{selected.rationale.map((reason) => <li key={reason}><Check size={15} />{reason}</li>)}</ul></section><div className="document-stage"><ResumeDocument data={selected.content} dense /></div></div> : null}
+      </div>}
     </>
   );
 }
@@ -313,23 +441,58 @@ function ApplicationsPage({ applications, refresh }: { applications: Array<Recor
   const statuses = ["to_review", "to_apply", "applied", "talking", "interviewing", "offer", "closed"];
   return (
     <>
-      <PageHeader title="投递看板" subtitle="投递和消息发送保留人工确认，岗位与简历版本完整关联" />
-      {!applications.length ? <EmptyState icon={BarChart3} title="还没有投递记录" body="生成岗位定制简历后，系统会自动建立待确认记录。" /> : <div className="application-board">{statuses.map((status) => { const items = applications.filter((item) => item.status === status); return <section key={status}><header><span>{statusLabels[status]}</span><b>{items.length}</b></header><div>{items.map((item) => <article key={String(item.id)}><strong>{String(item.title)}</strong><p>{String(item.company)}</p><small>{String(item.variant_name || "尚未选择简历")}</small><select value={String(item.status)} onChange={async (event) => { await api.setApplicationStatus(Number(item.job_id), event.target.value); await refresh(); }}>{statuses.map((value) => <option value={value} key={value}>{statusLabels[value]}</option>)}</select></article>)}</div></section>; })}</div>}
+      <PageHeader title="投递看板" subtitle="岗位、简历版本和结果完整关联；最终发送保留人工确认" />
+      {!applications.length ? <EmptyState icon={BarChart3} title="还没有投递记录" body="生成岗位定制简历后会自动创建待确认记录。" /> : <div className="application-board">{statuses.map((status) => {
+        const items = applications.filter((item) => item.status === status);
+        return <section key={status}><header><span>{statusLabels[status]}</span><b>{items.length}</b></header><div>{items.map((item) => <article key={String(item.id)}><strong>{String(item.title)}</strong><p>{String(item.company)}</p><small>{String(item.variant_name || "尚未选择简历")}</small><select value={String(item.status)} onChange={async (event) => { await api.setApplicationStatus(Number(item.job_id), event.target.value); await refresh(); }}>{statuses.map((value) => <option value={value} key={value}>{statusLabels[value]}</option>)}</select></article>)}</div></section>;
+      })}</div>}
     </>
   );
 }
 
-function SettingsPage() {
+function SettingsPage({ aiStatus, onChanged }: { aiStatus: AIStatus; onChanged: () => Promise<void> }) {
+  const [form, setForm] = useState({ baseUrl: aiStatus.baseUrl || "https://api.openai.com/v1", model: aiStatus.model || "gpt-5-mini", apiKey: "" });
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  useEffect(() => { setForm((current) => ({ ...current, baseUrl: aiStatus.baseUrl || current.baseUrl, model: aiStatus.model || current.model })); }, [aiStatus.baseUrl, aiStatus.model]);
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true); setMessage("");
+    try { await api.configureAI(form); await onChanged(); setForm((current) => ({ ...current, apiKey: "" })); setMessage("配置已载入当前服务进程，请运行连接测试。"); }
+    catch (caught) { setMessage(caught instanceof Error ? caught.message : "配置失败"); }
+    finally { setBusy(false); }
+  };
+  const test = async () => {
+    setBusy(true); setMessage("正在请求模型...");
+    try { const result = await api.testAI(); await onChanged(); setMessage(`连接成功，响应耗时 ${result.latencyMs} ms。`); }
+    catch (caught) { setMessage(caught instanceof Error ? caught.message : "连接测试失败"); }
+    finally { setBusy(false); }
+  };
   return (
     <>
-      <PageHeader title="设置" subtitle="本地数据、AI 服务和平台连接策略" />
-      <div className="settings-layout">
-        <section className="workspace-section"><div className="section-heading"><div><h2>数据与隐私</h2><p>首版数据仅保存在当前电脑</p></div><ShieldCheck size={20} /></div><dl className="detail-list"><div><dt>数据库</dt><dd>data/jobpilot.db</dd></div><div><dt>原始简历</dt><dd>data/uploads</dd></div><div><dt>Cookie 策略</dt><dd>不导出明文 Cookie</dd></div></dl></section>
-        <section className="workspace-section"><div className="section-heading"><div><h2>AI 服务</h2><p>当前 MVP 使用可解释的本地规则评分</p></div><Sparkles size={20} /></div><div className="notice"><CircleHelp size={17} /><p>模型供应商配置将在下一里程碑开放。没有 API Key 时，上传、岗位导入、评分和版本生成仍可使用。</p></div></section>
-        <section className="workspace-section"><div className="section-heading"><div><h2>投递保护</h2><p>默认安全模式</p></div><ShieldCheck size={20} /></div><dl className="detail-list"><div><dt>批量准备</dt><dd><span className="tag tag-green">允许</span></dd></div><div><dt>自动提交</dt><dd><span className="tag tag-muted">关闭</span></dd></div><div><dt>AI 自动回复</dt><dd><span className="tag tag-muted">关闭</span></dd></div></dl></section>
+      <PageHeader title="设置" subtitle="连接真实 AI、查看本地数据和采集边界" actions={<Tag tone={aiStatus.configured ? "green" : "amber"} icon={Bot}>{aiStatus.configured ? "AI 已配置" : "AI 未配置"}</Tag>} />
+      <div className="settings-grid">
+        <section className="surface ai-settings">
+          <div className="section-heading"><div><h2>AI 模型连接</h2><p>支持 OpenAI、OpenAI-compatible 和本地 Ollama 的 `/v1/chat/completions`</p></div><Bot size={21} /></div>
+          <form onSubmit={save}>
+            <label><span>API Base URL</span><input type="url" required value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} placeholder="https://api.openai.com/v1" /></label>
+            <label><span>模型名称</span><input required value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} placeholder="gpt-5-mini" /></label>
+            <label className="full"><span>API Key（仅保存在当前进程内）</span><div className="secret-input"><KeyRound size={16} /><input type="password" value={form.apiKey} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} placeholder={aiStatus.configured ? "已配置；留空则保持当前密钥" : "sk-...；本地 Ollama 可留空"} /></div></label>
+            <div className="settings-actions"><Button icon={Check} disabled={busy}>应用配置</Button><Button type="button" icon={Zap} variant="secondary" disabled={busy || !aiStatus.configured} onClick={() => void test()}>测试连接</Button></div>
+          </form>
+          {message ? <div className={`settings-message ${/失败|错误/.test(message) ? "error" : ""}`}>{message}</div> : null}
+          <dl className="connection-details"><div><dt>提供方</dt><dd>{aiStatus.providerLabel}</dd></div><div><dt>模型</dt><dd>{aiStatus.model || "未设置"}</dd></div><div><dt>配置来源</dt><dd>{aiStatus.source === "environment" ? ".env" : aiStatus.source === "runtime" ? "当前进程" : "未配置"}</dd></div><div><dt>上次测试</dt><dd>{aiStatus.lastCheckedAt ? new Date(aiStatus.lastCheckedAt).toLocaleString("zh-CN") : "尚未测试"}</dd></div></dl>
+        </section>
+        <aside className="settings-side">
+          <section className="surface"><div className="section-heading"><div><h2>数据与隐私</h2><p>默认仅保存在当前电脑</p></div><ShieldCheck size={20} /></div><dl className="detail-list"><div><dt>数据库</dt><dd>data/jobpilot.db</dd></div><div><dt>原始简历</dt><dd>data/uploads</dd></div><div><dt>模型传输</dt><dd>不发送手机号与邮箱</dd></div></dl></section>
+          <section className="surface"><div className="section-heading"><div><h2>自动化边界</h2><p>账号安全优先</p></div><CircleHelp size={20} /></div><dl className="detail-list"><div><dt>岗位采集</dt><dd><Tag tone="green">用户触发</Tag></dd></div><div><dt>批量准备</dt><dd><Tag tone="green">允许</Tag></dd></div><div><dt>最终投递</dt><dd><Tag tone="neutral">人工确认</Tag></dd></div></dl></section>
+        </aside>
       </div>
     </>
   );
+}
+
+function AIIndicator({ status, onClick }: { status: AIStatus; onClick: () => void }) {
+  return <button className={`ai-indicator ${status.configured ? "online" : ""}`} onClick={onClick}><span className="ai-pulse"><Bot size={15} /></span><span><strong>{status.configured ? status.providerLabel : "AI 未连接"}</strong><small>{status.configured ? status.model : "点击配置模型"}</small></span><ChevronRight size={14} /></button>;
 }
 
 export default function App() {
@@ -343,15 +506,24 @@ export default function App() {
   const [variants, setVariants] = useState<ResumeVariant[]>([]);
   const [applications, setApplications] = useState<Array<Record<string, unknown>>>([]);
   const [sources, setSources] = useState<SourceDefinition[]>([]);
+  const [aiStatus, setAIStatus] = useState<AIStatus>({ configured: false, baseUrl: "", model: "", providerLabel: "AI", source: "none", lastCheckedAt: "", lastError: "" });
 
   const refresh = useCallback(async () => {
     setError("");
     try {
-      const [nextOverview, nextJobs, nextVariants, nextApplications, nextSources] = await Promise.all([api.overview(), api.jobs(), api.variants(), api.applications(), api.sources()]);
-      setOverview(nextOverview); setJobs(nextJobs); setVariants(nextVariants); setApplications(nextApplications); setSources(nextSources);
-      if (nextOverview.hasResume) setMaster(await api.master()); else setMaster(null);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "无法连接本地服务"); }
-    finally { setLoading(false); }
+      const [nextOverview, nextJobs, nextVariants, nextApplications, nextSources, nextAI] = await Promise.all([api.overview(), api.jobs(), api.variants(), api.applications(), api.sources(), api.aiStatus()]);
+      setOverview(nextOverview);
+      setJobs(nextJobs);
+      setVariants(nextVariants);
+      setApplications(nextApplications);
+      setSources(nextSources);
+      setAIStatus(nextAI);
+      setMaster(nextOverview.hasResume ? await api.master() : null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "无法连接本地服务");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
@@ -359,28 +531,28 @@ export default function App() {
   const navigate = (next: Page) => { setPage(next); setSidebarOpen(false); };
   const uploaded = async (nextMaster: ResumeMaster) => { setMaster(nextMaster); await refresh(); setPage("overview"); };
 
-  if (loading) return <div className="app-loading"><LoaderCircle className="spin" size={28} /><span>正在打开本地工作台</span></div>;
+  if (loading) return <div className="app-loading"><LoaderCircle className="spin" size={27} /><span>正在连接本地工作台</span></div>;
   if (!master) return <FirstRun onUploaded={(item) => void uploaded(item)} />;
 
   return (
     <div className="app-shell">
       <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
-        <div className="sidebar-brand"><div className="brand-mark"><BriefcaseBusiness size={20} /></div><div><strong>JobPilot CN</strong><span>AI 求职工作台</span></div><IconButton className="mobile-close" label="关闭菜单" icon={X} onClick={() => setSidebarOpen(false)} /></div>
+        <div className="sidebar-brand"><div className="brand-mark"><BriefcaseBusiness size={19} /></div><div><strong>JobPilot CN</strong><span>AI 求职工作台</span></div><IconButton className="mobile-close" label="关闭菜单" icon={X} onClick={() => setSidebarOpen(false)} /></div>
         <nav>{navItems.map((item) => { const Icon = item.icon; return <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => navigate(item.id)}><Icon size={18} /><span>{item.label}</span>{item.id === "jobs" && jobs.length ? <b>{jobs.length}</b> : null}</button>; })}</nav>
-        <div className="sidebar-status"><div><span className="status-dot" /><strong>本地模式</strong></div><p>数据保存在当前电脑</p></div>
+        <div className="sidebar-footer"><AIIndicator status={aiStatus} onClick={() => navigate("settings")} /><div className="local-state"><span className="status-dot" /><span><strong>本地服务运行中</strong><small>数据保存在当前电脑</small></span></div></div>
       </aside>
       {sidebarOpen ? <button className="sidebar-backdrop" aria-label="关闭菜单" onClick={() => setSidebarOpen(false)} /> : null}
       <main className="main-panel">
-        <div className="mobile-bar"><IconButton label="打开菜单" icon={Menu} onClick={() => setSidebarOpen(true)} /><strong>{currentNav?.label}</strong><IconButton label="刷新数据" icon={RefreshCw} onClick={() => void refresh()} /></div>
+        <div className="utility-bar"><div className="mobile-nav"><IconButton label="打开菜单" icon={Menu} onClick={() => setSidebarOpen(true)} /><strong>{currentNav?.label}</strong></div><div className="utility-spacer" /><AIIndicator status={aiStatus} onClick={() => navigate("settings")} /><IconButton label="刷新数据" icon={RefreshCw} onClick={() => void refresh()} /></div>
         {error ? <div className="global-error"><AlertTriangle size={17} />{error}<button onClick={() => void refresh()}>重试</button></div> : null}
         <div className="page-content">
-          {page === "overview" && overview ? <OverviewPage overview={overview} master={master} jobs={jobs} onNavigate={navigate} /> : null}
+          {page === "overview" && overview ? <OverviewPage overview={overview} master={master} jobs={jobs} aiStatus={aiStatus} onNavigate={navigate} /> : null}
           {page === "resume" ? <ResumePage master={master} onUploaded={(item) => void uploaded(item)} /> : null}
-          {page === "discover" ? <DiscoverPage sources={sources} onChanged={refresh} /> : null}
-          {page === "jobs" ? <JobsPage jobs={jobs} refresh={refresh} /> : null}
+          {page === "discover" ? <DiscoverPage sources={sources} jobCount={jobs.length} onChanged={refresh} /> : null}
+          {page === "jobs" ? <JobsPage jobs={jobs} aiStatus={aiStatus} refresh={refresh} onConfigureAI={() => navigate("settings")} /> : null}
           {page === "variants" ? <VariantsPage variants={variants} /> : null}
           {page === "applications" ? <ApplicationsPage applications={applications} refresh={refresh} /> : null}
-          {page === "settings" ? <SettingsPage /> : null}
+          {page === "settings" ? <SettingsPage aiStatus={aiStatus} onChanged={refresh} /> : null}
         </div>
       </main>
     </div>

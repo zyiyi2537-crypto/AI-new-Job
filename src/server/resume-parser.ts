@@ -3,10 +3,10 @@ import mammoth from "mammoth";
 import type { ResumeItem, ResumeMasterData, ResumeSection } from "../shared/types.js";
 
 const sectionPatterns: Array<{ type: ResumeSection["type"]; title: string; pattern: RegExp }> = [
-  { type: "education", title: "教育经历", pattern: /^(教育经历|教育背景|学历|education)$/i },
+  { type: "education", title: "教育经历", pattern: /^(教育经历|教育背景|教育与成果|学历|education)$/i },
   { type: "experience", title: "工作经历", pattern: /^(工作经历|工作经验|实习经历|职业经历|experience|work experience|employment)$/i },
   { type: "projects", title: "项目经历", pattern: /^(项目经历|项目经验|代表项目|projects?|project experience)$/i },
-  { type: "skills", title: "专业技能", pattern: /^(专业技能|技能|技能清单|skills?|technical skills)$/i },
+  { type: "skills", title: "专业技能", pattern: /^(核心能力|专业技能|技能|技能清单|skills?|technical skills)$/i },
   { type: "certifications", title: "证书与奖项", pattern: /^(证书|证书与奖项|资格认证|获奖经历|certifications?|awards?)$/i },
   { type: "languages", title: "语言能力", pattern: /^(语言能力|语言|languages?)$/i },
   { type: "other", title: "其他信息", pattern: /^(自我评价|个人总结|兴趣爱好|其他|summary|profile|objective)$/i },
@@ -21,7 +21,7 @@ function cleanLines(text: string): string[] {
     .replace(/\r/g, "")
     .split("\n")
     .map((line) => line.replace(/[\t ]+/g, " ").trim())
-    .filter(Boolean);
+    .filter((line) => Boolean(line) && !/^\d+\s*\/\s*\d+$/.test(line));
 }
 
 function stableId(prefix: string, index: number): string {
@@ -47,15 +47,28 @@ function linesToItems(lines: string[], prefix: string): ResumeItem[] {
 }
 
 function detectSection(line: string) {
-  const normalized = line.replace(/[：:|]/g, "").trim();
+  const normalized = line.replace(/[：:|]/g, "").replace(/\s+/g, "").trim();
   return sectionPatterns.find((section) => section.pattern.test(normalized));
+}
+
+function detectName(lines: string[]): string {
+  for (const line of lines.slice(0, 12)) {
+    const compact = line.replace(/\s+/g, "");
+    if (/^[\p{Script=Han}·]{2,6}$/u.test(compact) && !detectSection(line) && !locationPattern.test(compact)) return compact;
+  }
+  return lines.find((line) => line.length >= 2
+    && line.length <= 40
+    && !line.includes("@")
+    && !/\d{5,}/.test(line)
+    && !/^(手机|电话|邮箱|email|tel)\s*[：:]/i.test(line)
+    && !detectSection(line)) || "待确认姓名";
 }
 
 export function structureResume(text: string): ResumeMasterData {
   const lines = cleanLines(text);
   const email = text.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/)?.[0] || "";
   const phone = text.match(/(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)/)?.[0] || "";
-  const name = lines.find((line) => line.length >= 2 && line.length <= 20 && !line.includes("@") && !/\d{5,}/.test(line) && !detectSection(line)) || "待确认姓名";
+  const name = detectName(lines);
 
   const buckets = new Map<ResumeSection["type"], { title: string; lines: string[] }>();
   let currentType: ResumeSection["type"] = "other";
@@ -66,7 +79,7 @@ export function structureResume(text: string): ResumeMasterData {
       if (!buckets.has(currentType)) buckets.set(currentType, { title: section.title, lines: [] });
       continue;
     }
-    if (line === name || (email && line.includes(email)) || (phone && line.includes(phone))) continue;
+    if (line.replace(/\s+/g, "") === name.replace(/\s+/g, "") || (email && line.includes(email)) || (phone && line.includes(phone))) continue;
     const bucket = buckets.get(currentType) || { title: currentType === "other" ? "个人概况" : currentType, lines: [] };
     bucket.lines.push(line);
     buckets.set(currentType, bucket);
@@ -107,7 +120,25 @@ async function extractPdf(buffer: Buffer): Promise<string> {
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     const page = await document.getPage(pageNumber);
     const content = await page.getTextContent();
-    pages.push(content.items.map((item) => ("str" in item ? item.str : "")).join(" "));
+    const lines: string[] = [];
+    let currentLine: string[] = [];
+    let currentY: number | null = null;
+    const flush = () => {
+      const line = currentLine.join(" ").replace(/\s+/g, " ").trim();
+      if (line) lines.push(line);
+      currentLine = [];
+      currentY = null;
+    };
+    for (const item of content.items) {
+      if (!("str" in item) || !item.str.trim()) continue;
+      const y = Number(item.transform?.[5] ?? 0);
+      if (currentY != null && Math.abs(currentY - y) > 2) flush();
+      currentLine.push(item.str);
+      currentY = y;
+      if (item.hasEOL) flush();
+    }
+    flush();
+    pages.push(lines.join("\n"));
   }
   return pages.join("\n");
 }

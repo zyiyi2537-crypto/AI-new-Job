@@ -87,6 +87,9 @@ export interface MatchAnalysis {
   missingKeywords: string[];
   strengths: string[];
   gaps: string[];
+  analysisMode: "rules" | "ai";
+  aiModel: string;
+  summary: string;
   createdAt: string;
 }
 
@@ -118,4 +121,20 @@ export interface SourceDefinition {
   status: "available" | "planned" | "needs_login";
   capabilities: string[];
   note: string;
+}
+
+export interface AIStatus {
+  configured: boolean;
+  baseUrl: string;
+  model: string;
+  providerLabel: string;
+  source: "environment" | "runtime" | "none";
+  lastCheckedAt: string;
+  lastError: string;
+}
+
+export interface SearchLink {
+  id: string;
+  name: string;
+  url: string;
 }

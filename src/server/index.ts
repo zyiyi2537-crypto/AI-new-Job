@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -8,6 +9,7 @@ import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import { z } from "zod";
 import type { ApplicationStatus, Job } from "../shared/types.js";
+import { configureAI, getAIStatus, scoreJobWithAI, testAIConnection } from "./ai-provider.js";
 import {
   createResumeMaster,
   createVariant,
@@ -25,6 +27,7 @@ import {
   uploadDir,
 } from "./database.js";
 import { extractResumeText, structureResume } from "./resume-parser.js";
+import { buildSearchLinks, detectSource, importJobFromUrl } from "./job-page-parser.js";
 import { scoreJob, tailorResume } from "./scoring.js";
 import { sources } from "./sources.js";
 
@@ -54,9 +57,23 @@ app.setErrorHandler((error, _request, reply) => {
   reply.status(statusCode).send({ error: normalized.message || "请求处理失败" });
 });
 
-app.get("/api/health", async () => ({ status: "ok", version: "0.1.0", time: new Date().toISOString() }));
+app.get("/api/health", async () => ({ status: "ok", version: "0.2.0", time: new Date().toISOString() }));
 app.get("/api/overview", async () => overview());
 app.get("/api/sources", async () => sources);
+app.get("/api/ai/status", async () => getAIStatus());
+app.post("/api/ai/config", async (request) => {
+  const body = z.object({ baseUrl: z.string(), apiKey: z.string().optional(), model: z.string() }).parse(request.body);
+  return configureAI(body);
+});
+app.post("/api/ai/test", async () => testAIConnection());
+app.get("/api/sources/search-links", async (request) => {
+  const query = z.object({ q: z.string().trim().min(1), city: z.string().trim().default("") }).parse(request.query);
+  return buildSearchLinks(query.q, query.city);
+});
+app.get("/api/collector/info", async () => ({
+  extensionPath: path.resolve("extension"),
+  supportedSources: ["boss", "zhaopin", "liepin", "lagou", "51job", "web"],
+}));
 app.get("/api/resumes/master", async (_request, reply) => {
   const master = latestMaster();
   if (!master) return reply.status(404).send({ error: "尚未上传原始简历" });
@@ -122,6 +139,38 @@ app.post("/api/jobs/import", async (request, reply) => {
   return reply.status(201).send({ received: items.length, inserted: results.filter((item) => item.inserted).length, ids: results.map((item) => item.id) });
 });
 
+app.post("/api/jobs/import-url", async (request, reply) => {
+  const { url } = z.object({ url: z.string().url() }).parse(request.body);
+  const item = await importJobFromUrl(url);
+  const result = insertJob(item);
+  return reply.status(201).send({ inserted: result.inserted ? 1 : 0, ids: [result.id], job: getJob(result.id) });
+});
+
+app.post("/api/jobs/capture", async (request, reply) => {
+  const capturedJob = z.object({
+    source: z.string().trim().optional(),
+    sourceJobId: z.string().trim().optional(),
+    title: z.string().trim().min(1),
+    company: z.string().trim().default("待确认公司"),
+    location: z.string().trim().default(""),
+    salaryText: z.string().trim().default(""),
+    description: z.string().trim().min(20),
+    url: z.string().url(),
+    postedAt: z.string().trim().default(""),
+  });
+  const body = z.union([capturedJob, z.array(capturedJob).min(1).max(100)]).parse(request.body);
+  const items = Array.isArray(body) ? body : [body];
+  const results = items.map((item) => insertJob({
+    ...item,
+    source: item.source || detectSource(item.url),
+    sourceJobId: item.sourceJobId || createHash("sha1").update(item.url).digest("hex"),
+    salaryMin: null,
+    salaryMax: null,
+    status: "new",
+  }));
+  return reply.status(201).send({ received: items.length, inserted: results.filter((item) => item.inserted).length, ids: results.map((item) => item.id) });
+});
+
 app.post("/api/jobs/seed", async (_request, reply) => {
   const samples: Array<Omit<Job, "id" | "collectedAt" | "analysis">> = [
     {
@@ -165,8 +214,14 @@ function analyzeOne(job: Job) {
 
 app.post("/api/jobs/:id/analyze", async (request, reply) => {
   const { id } = z.object({ id: z.coerce.number().int().positive() }).parse(request.params);
+  const { mode } = z.object({ mode: z.enum(["rules", "ai"]).default("rules") }).default({ mode: "rules" }).parse(request.body);
   const job = getJob(id);
   if (!job) return reply.status(404).send({ error: "岗位不存在" });
+  if (mode === "ai") {
+    const master = latestMaster();
+    if (!master) return reply.status(409).send({ error: "请先上传原始简历" });
+    return saveAnalysis(master.id, await scoreJobWithAI(job, master.data));
+  }
   return analyzeOne(job);
 });
 

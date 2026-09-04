@@ -9,6 +9,8 @@ Key runtime components include:
 | React / React DOM | User interface | MIT |
 | Vite | Frontend build tooling | MIT |
 | Fastify and official plugins | Local HTTP API | MIT |
+| Cheerio | Structured HTML parsing | MIT |
+| dotenv | Local environment configuration | BSD-2-Clause |
 | Lucide React | Interface icons | ISC |
 | Mammoth | DOCX text extraction | BSD-2-Clause |
 | PDF.js (`pdfjs-dist`) | Text-layer PDF extraction | Apache-2.0 |

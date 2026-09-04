@@ -1,4 +1,4 @@
-import type { Job, Overview, ResumeMaster, ResumeVariant, SourceDefinition } from "../shared/types";
+import type { AIStatus, Job, Overview, ResumeMaster, ResumeVariant, SearchLink, SourceDefinition } from "../shared/types";
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options);
@@ -17,17 +17,35 @@ export const api = {
   },
   sources: () => request<SourceDefinition[]>("/api/sources"),
   jobs: () => request<Job[]>("/api/jobs"),
-  seedJobs: () => request<{ inserted: number }>("/api/jobs/seed", { method: "POST" }),
+  seedJobs: () => request<{ inserted: number }>("/api/jobs/seed", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }),
   importJob: (job: Record<string, unknown>) => request<{ inserted: number; ids: number[] }>("/api/jobs/import", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(job),
   }),
-  analyzeJob: (id: number) => request<Job["analysis"]>(`/api/jobs/${id}/analyze`, { method: "POST" }),
+  analyzeJob: (id: number, mode: "rules" | "ai" = "rules") => request<Job["analysis"]>(`/api/jobs/${id}/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  }),
   analyzeAll: () => request<{ analyzed: number }>("/api/jobs/analyze", { method: "POST" }),
   createVariant: (id: number) => request<ResumeVariant>(`/api/jobs/${id}/variants`, { method: "POST" }),
   variants: () => request<ResumeVariant[]>("/api/variants"),
   applications: () => request<Array<Record<string, unknown>>>("/api/applications"),
+  aiStatus: () => request<AIStatus>("/api/ai/status"),
+  configureAI: (config: { baseUrl: string; apiKey?: string; model: string }) => request<AIStatus>("/api/ai/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  }),
+  testAI: () => request<{ ok: true; latencyMs: number; status: AIStatus }>("/api/ai/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }),
+  searchLinks: (query: string, city: string) => request<SearchLink[]>(`/api/sources/search-links?q=${encodeURIComponent(query)}&city=${encodeURIComponent(city)}`),
+  collectorInfo: () => request<{ extensionPath: string; supportedSources: string[] }>("/api/collector/info"),
+  importJobUrl: (url: string) => request<{ inserted: number; ids: number[]; job: Job }>("/api/jobs/import-url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  }),
   setApplicationStatus: (jobId: number, status: string) => request<{ ok: boolean }>(`/api/applications/${jobId}/status`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
