@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AIStatus, Job, MatchAnalysis, ResumeMasterData, ScoreDimension } from "../shared/types.js";
+import type { AIStatus, Job, MatchAnalysis, ResumeMaster, ResumeMasterData, ScoreDimension, SearchPlan } from "../shared/types.js";
 import { scoreJob } from "./scoring.js";
 
 const aiResponseSchema = z.object({
@@ -13,6 +13,16 @@ const aiResponseSchema = z.object({
     preference: z.string().trim().min(2).max(180),
     quality: z.string().trim().min(2).max(180),
   }),
+});
+
+const searchPlanSchema = z.object({
+  strategies: z.array(z.object({
+    title: z.string().trim().min(2).max(30),
+    query: z.string().trim().min(2).max(60),
+    keywords: z.array(z.string().trim().min(1).max(30)).min(1).max(6),
+    reason: z.string().trim().min(8).max(180),
+    confidence: z.number().min(0).max(100),
+  })).min(3).max(5),
 });
 
 type AIConfig = {
@@ -89,11 +99,22 @@ function parseJsonContent(content: string): unknown {
   return JSON.parse(normalized);
 }
 
+function redactPrivateText(text: string): string {
+  return text
+    .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, "[email removed]")
+    .replace(/(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)/g, "[phone removed]");
+}
+
 function endpointCandidates(baseUrl: string): string[] {
   const normalized = baseUrl.replace(/\/+$/, "");
-  if (/\/chat\/completions$/i.test(normalized)) return [normalized];
-  if (/\/v\d+$/i.test(normalized)) return [`${normalized}/chat/completions`];
-  return [`${normalized}/chat/completions`, `${normalized}/v1/chat/completions`];
+  const candidates = /\/chat\/completions$/i.test(normalized)
+    ? [normalized]
+    : /\/v\d+$/i.test(normalized)
+      ? [`${normalized}/chat/completions`]
+      : [`${normalized}/chat/completions`, `${normalized}/v1/chat/completions`];
+  return resolvedEndpoint && candidates.includes(resolvedEndpoint)
+    ? [resolvedEndpoint, ...candidates.filter((endpoint) => endpoint !== resolvedEndpoint)]
+    : candidates;
 }
 
 function errorMessage(payload: unknown, status: number): string {
@@ -173,11 +194,37 @@ export async function testAIConnection(): Promise<{ ok: true; latencyMs: number;
   return { ok: true, latencyMs: Date.now() - startedAt, status: getAIStatus() };
 }
 
+export async function planSearchWithAI(master: ResumeMaster, baseline: SearchPlan): Promise<SearchPlan> {
+  const resume = {
+    targetTitle: redactPrivateText(master.data.basics.title),
+    location: redactPrivateText(master.data.basics.location),
+    summary: redactPrivateText(master.data.basics.summary),
+    sections: JSON.parse(redactPrivateText(JSON.stringify(master.data.sections))),
+    extractedSkills: baseline.skills,
+  };
+  const result = searchPlanSchema.parse(await chatJson(
+    [
+      "你是中文招聘搜索策略规划器。只输出 JSON。",
+      "根据候选人的真实简历生成 3 到 5 个招聘网站搜索方向。",
+      "query 必须适合直接放入 BOSS、智联、猎聘或拉勾的关键词输入框，应以岗位名称为核心，最多附加两个已有技能。",
+      "不得虚构候选人未拥有的技能、行业、级别或经历，不得输出姓名和联系方式。",
+      "输出结构为 {strategies:[{title,query,keywords,reason,confidence}]}。",
+    ].join("\n"),
+    JSON.stringify({ resume, city: baseline.city, localBaseline: baseline.strategies }),
+  ));
+  return {
+    ...baseline,
+    mode: "ai",
+    generatedAt: new Date().toISOString(),
+    strategies: result.strategies.map((strategy, index) => ({ ...strategy, id: `strategy-${index + 1}` })),
+  };
+}
+
 function resumeEvidence(master: ResumeMasterData): string {
-  return JSON.stringify({
+  return redactPrivateText(JSON.stringify({
     basics: { name: master.basics.name, title: master.basics.title, location: master.basics.location, summary: master.basics.summary },
     sections: master.sections,
-  });
+  }));
 }
 
 export async function scoreJobWithAI(job: Job, master: ResumeMasterData): Promise<Omit<MatchAnalysis, "id" | "createdAt">> {

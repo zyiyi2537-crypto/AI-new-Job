@@ -25,10 +25,34 @@ function getJson(url) {
   });
 }
 
+function postJson(url, payload) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload);
+    const parsedUrl = new URL(url);
+    const request = http.request({
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port,
+      path: parsedUrl.pathname,
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
+    }, (response) => {
+      let raw = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk) => { raw += chunk; });
+      response.on("end", () => {
+        if ((response.statusCode || 500) >= 400) return reject(new Error(`${url} returned ${response.statusCode}: ${raw}`));
+        try { resolve(JSON.parse(raw)); } catch (error) { reject(error); }
+      });
+    });
+    request.on("error", reject);
+    request.end(body);
+  });
+}
+
 async function ensureServer() {
   try { await getJson("http://127.0.0.1:8787/api/health"); return; } catch { /* Start an isolated local server below. */ }
   const tsxCli = path.join(root, "node_modules", "tsx", "dist", "cli.mjs");
-  serverProcess = spawn(process.execPath, [tsxCli, path.join(root, "src", "server", "index.ts")], { cwd: root, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, stdio: "ignore", windowsHide: true });
+  serverProcess = spawn(process.execPath, [tsxCli, path.join(root, "src", "server", "index.ts")], { cwd: root, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", OPENAI_API_KEY: "", OPENAI_MODEL: "" }, stdio: "ignore", windowsHide: true });
   await waitFor(async () => {
     if (serverProcess.exitCode != null) throw new Error("Local server exited during startup");
     try { return await getJson("http://127.0.0.1:8787/api/health"); } catch { return null; }
@@ -73,12 +97,60 @@ function startFixtureServer() {
   });
 }
 
+function startAIFixtureServer() {
+  const server = http.createServer((request, response) => {
+    let raw = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => { raw += chunk; });
+    request.on("end", () => {
+      if (request.url === "/chat/completions") {
+        response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        response.end("<html>provider console</html>");
+        return;
+      }
+      const body = JSON.parse(raw || "{}");
+      const system = String(body.messages?.[0]?.content || "");
+      const content = system.includes("招聘搜索策略规划器")
+        ? {
+          strategies: [
+            { title: "AI 应用工程师", query: "AI 应用工程师 RAG", keywords: ["RAG", "Python"], reason: "母版包含 AI 应用和 RAG 的可验证项目经历。", confidence: 96 },
+            { title: "Python 工程师", query: "Python 工程师 FastAPI", keywords: ["Python", "FastAPI"], reason: "母版中的后端接口经验可以直接支持该方向。", confidence: 87 },
+            { title: "前端工程师", query: "前端工程师 Vue", keywords: ["Vue", "TypeScript"], reason: "母版包含前端项目和 Vue 的直接使用证据。", confidence: 79 },
+          ],
+        }
+        : system.includes("中文求职匹配分析器")
+          ? {
+            summary: "岗位职责与母版中的 AI 应用开发和接口联调经历存在直接证据。",
+            strengths: ["母版包含与岗位相关的 Python 和 RAG 项目证据"],
+            gaps: ["岗位中的具体业务场景仍需在面试前进一步确认"],
+            dimensionReasons: {
+              hard: "母版与岗位硬性条件未发现明显冲突",
+              skills: "母版技能与 JD 关键词存在直接命中",
+              evidence: "相关技能能够映射到已有项目经历",
+              preference: "岗位方向与当前目标职位一致",
+              quality: "JD 职责和任职要求信息完整",
+            },
+          }
+          : { ok: true };
+      response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+    });
+  });
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(8792, "127.0.0.1", () => resolve(server));
+  });
+}
+
 app.whenReady().then(async () => {
   let fixtureServer = null;
+  let aiFixtureServer = null;
   let window = null;
   let insertedIds = [];
   try {
     await ensureServer();
+    aiFixtureServer = await startAIFixtureServer();
+    await postJson("http://127.0.0.1:8787/api/ai/config", { baseUrl: "http://127.0.0.1:8792", apiKey: "desktop-fixture-key", model: "desktop-verification" });
     const beforeJobs = await getJson("http://127.0.0.1:8787/api/jobs");
     const beforeIds = new Set(beforeJobs.map((job) => job.id));
     fixtureServer = await startFixtureServer();
@@ -92,6 +164,10 @@ app.whenReady().then(async () => {
     await window.loadURL("http://127.0.0.1:8787/?desktop=1");
     await waitFor(() => window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === "岗位发现")`), "application navigation");
     await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "岗位发现")?.click()`);
+    const planQueries = await waitFor(async () => {
+      const queries = await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll(".strategy-list code")).map((node) => node.textContent?.trim()).filter(Boolean)`);
+      return queries.length ? queries : null;
+    }, "resume search plan");
     await waitFor(() => window.webContents.executeJavaScript(`Boolean(document.querySelector("webview"))`), "embedded webview");
 
     const externalNavigation = await waitFor(async () => {
@@ -105,7 +181,7 @@ app.whenReady().then(async () => {
     writeFileSync(path.join(outputDir, "desktop-boss.png"), (await window.capturePage()).toPNG());
 
     const beforeBossMessage = await window.webContents.executeJavaScript(`document.querySelector(".browser-message")?.textContent || ""`);
-    await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("扫描当前列表"))?.click()`);
+    await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("扫描并匹配"))?.click()`);
     const bossCaptureMessage = await waitFor(async () => {
       const text = await window.webContents.executeJavaScript(`document.querySelector(".browser-message")?.textContent || ""`);
       return text && text !== beforeBossMessage && !/正在扫描/.test(text) ? text : "";
@@ -115,7 +191,7 @@ app.whenReady().then(async () => {
 
     await window.webContents.executeJavaScript(`document.querySelector("webview").loadURL("http://127.0.0.1:8791/")`);
     await waitFor(() => window.webContents.executeJavaScript(`document.querySelector("webview")?.executeJavaScript("document.title")`), "fixture page");
-    await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("扫描当前列表"))?.click()`);
+    await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("扫描并匹配"))?.click()`);
     const message = await waitFor(async () => {
       const text = await window.webContents.executeJavaScript(`document.querySelector(".browser-message")?.textContent || ""`);
       return /新增\s*2\s*条/.test(text) ? text : "";
@@ -124,8 +200,18 @@ app.whenReady().then(async () => {
     insertedIds = afterJobs.filter((job) => !beforeIds.has(job.id)).map((job) => job.id);
     const insertedTitles = afterJobs.filter((job) => insertedIds.includes(job.id)).map((job) => job.title);
     if (!insertedTitles.includes("AI 应用工程师") || !insertedTitles.includes("RAG 后端工程师")) throw new Error("Captured fixture jobs were not persisted");
+    const variantsBefore = await getJson("http://127.0.0.1:8787/api/variants");
+    const variantIdsBefore = new Set(variantsBefore.map((variant) => variant.id));
+    await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("生成 Top 3 简历"))?.click()`);
+    const prepareMessage = await waitFor(async () => {
+      const text = await window.webContents.executeJavaScript(`document.querySelector(".browser-message")?.textContent || ""`);
+      return /已准备\s*2\s*份岗位简历/.test(text) ? text : "";
+    }, "resume preparation");
+    const variantsAfter = await getJson("http://127.0.0.1:8787/api/variants");
+    const variantTitles = variantsAfter.filter((variant) => !variantIdsBefore.has(variant.id)).map((variant) => variant.jobTitle);
+    if (!variantTitles.includes("AI 应用工程师") || !variantTitles.includes("RAG 后端工程师")) throw new Error("Job-specific resume variants were not persisted");
     writeFileSync(path.join(outputDir, "desktop-capture.png"), (await window.capturePage()).toPNG());
-    process.stdout.write(`${JSON.stringify({ ok: true, externalResult, bossCaptureMessage, bossTitles, message, insertedTitles })}\n`);
+    process.stdout.write(`${JSON.stringify({ ok: true, planQueries, externalResult, bossCaptureMessage, bossTitles, message, insertedTitles, prepareMessage, variantTitles })}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.stack : error}\n`);
     process.exitCode = 1;
@@ -139,6 +225,7 @@ app.whenReady().then(async () => {
     }
     if (window && !window.isDestroyed()) window.destroy();
     if (fixtureServer) await new Promise((resolve) => fixtureServer.close(resolve));
+    if (aiFixtureServer) await new Promise((resolve) => aiFixtureServer.close(resolve));
     await stopStartedServer();
     app.exit(process.exitCode || 0);
   }

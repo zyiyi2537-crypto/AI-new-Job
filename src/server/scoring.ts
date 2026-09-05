@@ -107,12 +107,26 @@ export function scoreJob(job: Job, master: ResumeMasterData): Omit<MatchAnalysis
 }
 
 export function tailorResume(job: Job, master: ResumeMasterData, analysis: MatchAnalysis): { content: ResumeMasterData; rationale: string[] } {
+  const relevantTerms = [...analysis.matchedKeywords, ...job.title.toLowerCase().match(/[a-z][a-z0-9.+#-]{1,}|[\u4e00-\u9fff]{2,}/g) || []];
+  const textRelevance = (text: string) => relevantTerms.reduce((score, term) => score + (normalize(text).includes(term.toLowerCase()) ? 1 : 0), 0);
   const relevance = (section: ResumeSection) => {
-    const text = normalize(sectionText(section));
-    return analysis.matchedKeywords.reduce((score, skill) => score + (text.includes(skill.toLowerCase()) ? 1 : 0), 0);
+    return textRelevance(sectionText(section));
   };
   const prioritized = master.sections
-    .map((section, index) => ({ section: structuredClone(section), index, relevance: relevance(section) }))
+    .map((section, index) => ({
+      section: {
+        ...structuredClone(section),
+        items: section.items.map((item) => ({
+          ...structuredClone(item),
+          bullets: item.bullets
+            .map((bullet, bulletIndex) => ({ bullet, bulletIndex, relevance: textRelevance(bullet) }))
+            .sort((a, b) => b.relevance - a.relevance || a.bulletIndex - b.bulletIndex)
+            .map(({ bullet }) => bullet),
+        })),
+      },
+      index,
+      relevance: relevance(section),
+    }))
     .sort((a, b) => b.relevance - a.relevance || a.index - b.index)
     .map(({ section }) => section);
 
@@ -129,6 +143,7 @@ export function tailorResume(job: Job, master: ResumeMasterData, analysis: Match
     rationale: [
       `目标岗位：${job.title} @ ${job.company}`,
       analysis.matchedKeywords.length ? `优先展示命中技能：${analysis.matchedKeywords.join("、")}` : "未发现明确技能命中，保留原始章节顺序",
+      "在每段经历中优先排列与 JD 直接相关的原始要点，未改写事实内容。",
       analysis.missingKeywords.length ? `未写入缺少证据的关键词：${analysis.missingKeywords.join("、")}` : "未检测到明显技能缺口",
       "本版本仅调整摘要、目标职位和章节顺序，不添加原始简历之外的事实。",
     ],

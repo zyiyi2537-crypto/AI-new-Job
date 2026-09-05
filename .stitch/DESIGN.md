@@ -19,7 +19,7 @@ Clean, professional desktop-first job-search operations workspace with restraine
 1. **Navigation rail:** Compact icon-label navigation, product identity, live AI connection signal, local-data status.
 2. **Utility header:** Current workspace title, global AI status, refresh and context actions.
 3. **Primary content:** Full-width operational bands and split panes. Avoid decorative card grids and nested cards.
-4. **Job discovery:** Search command bar, embedded recruitment browser in desktop mode, capture controls, source status, Chrome collector fallback, and direct URL import.
+4. **Job discovery:** Resume-derived search strategies appear before secondary keyword refinements, followed by the embedded recruitment browser, scan-and-match controls, source status, Chrome collector fallback, and direct URL import.
 5. **Job analysis:** Dense job list next to an evidence panel with score dimensions, AI/rules provenance and explicit actions.
 6. **Resume workbench:** Version rail, generation rationale and printable single-column document.
 

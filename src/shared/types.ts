@@ -139,3 +139,33 @@ export interface SearchLink {
   name: string;
   url: string;
 }
+
+export interface SearchStrategy {
+  id: string;
+  title: string;
+  query: string;
+  keywords: string[];
+  reason: string;
+  confidence: number;
+}
+
+export interface SearchPlan {
+  masterId: number;
+  masterVersion: number;
+  city: string;
+  mode: "rules" | "ai";
+  generatedAt: string;
+  skills: string[];
+  strategies: SearchStrategy[];
+  fallbackReason?: string;
+}
+
+export interface PreparedJob {
+  jobId: number;
+  title: string;
+  company: string;
+  score: number;
+  analysisMode: "rules" | "ai";
+  variantId: number;
+  reused: boolean;
+}

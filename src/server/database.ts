@@ -328,7 +328,7 @@ export function createVariant(input: {
   return getVariant(Number(result.lastInsertRowid))!;
 }
 
-function getVariant(id: number): ResumeVariant | null {
+export function getVariant(id: number): ResumeVariant | null {
   const row = db
     .prepare(`SELECT v.*,j.title job_title,j.company FROM resume_variants v JOIN jobs j ON j.id=v.job_id WHERE v.id=?`)
     .get(id) as Row | undefined;
@@ -345,6 +345,13 @@ function getVariant(id: number): ResumeVariant | null {
     rationale: json<string[]>(row.rationale_json, []),
     createdAt: String(row.created_at),
   };
+}
+
+export function findVariantForJobAndMaster(jobId: number, masterId: number): ResumeVariant | null {
+  const row = db
+    .prepare("SELECT id FROM resume_variants WHERE job_id=? AND master_id=? ORDER BY created_at DESC LIMIT 1")
+    .get(jobId, masterId) as Row | undefined;
+  return row ? getVariant(Number(row.id)) : null;
 }
 
 export function listVariants(): ResumeVariant[] {

@@ -39,7 +39,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import type { AIStatus, Job, Overview, ResumeMaster, ResumeMasterData, ResumeVariant, SearchLink, SourceDefinition } from "../shared/types";
+import type { AIStatus, Job, Overview, ResumeMaster, ResumeMasterData, ResumeVariant, SearchLink, SearchPlan, SearchStrategy, SourceDefinition } from "../shared/types";
 import { api } from "./api";
 import { collectJobsFromPage, type CapturedJob } from "./job-capture";
 
@@ -156,9 +156,9 @@ function FirstRun({ onUploaded }: { onUploaded: (master: ResumeMaster) => void }
         <ResumeUpload onUploaded={onUploaded} />
         <div className="process-strip">
           <span><b>01</b> 上传并解析</span><ChevronRight size={15} />
-          <span><b>02</b> 导入岗位</span><ChevronRight size={15} />
-          <span><b>03</b> 规则与 AI 分析</span><ChevronRight size={15} />
-          <span><b>04</b> 人工确认投递</span>
+          <span><b>02</b> 自动规划方向</span><ChevronRight size={15} />
+          <span><b>03</b> 扫描并匹配 JD</span><ChevronRight size={15} />
+          <span><b>04</b> 生成岗位简历</span>
         </div>
       </section>
     </main>
@@ -251,7 +251,7 @@ type ImportMode = "url" | "manual";
 
 const isDesktopShell = () => new URLSearchParams(window.location.search).get("desktop") === "1" || /Electron\//i.test(navigator.userAgent);
 
-function EmbeddedRecruitmentBrowser({ links, onChanged }: { links: SearchLink[]; onChanged: () => Promise<void> }) {
+function EmbeddedRecruitmentBrowser({ links, aiStatus, onChanged }: { links: SearchLink[]; aiStatus: AIStatus; onChanged: () => Promise<void> }) {
   const [webview, setWebview] = useState<HTMLWebViewElement | null>(null);
   const [activeId, setActiveId] = useState("boss");
   const [requestedUrl, setRequestedUrl] = useState(links.find((link) => link.id === "boss")?.url || "https://www.zhipin.com/");
@@ -259,7 +259,8 @@ function EmbeddedRecruitmentBrowser({ links, onChanged }: { links: SearchLink[];
   const [loading, setLoading] = useState(true);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
-  const [busy, setBusy] = useState<"current" | "list" | "">("");
+  const [busy, setBusy] = useState<"current" | "list" | "prepare" | "">("");
+  const [capturedIds, setCapturedIds] = useState<number[]>([]);
   const [message, setMessage] = useState("招聘网站登录态只保存在这个桌面应用中。");
 
   const syncNavigation = useCallback(() => {
@@ -327,11 +328,34 @@ function EmbeddedRecruitmentBrowser({ links, onChanged }: { links: SearchLink[];
       const captured = await webview.executeJavaScript<CapturedJob[]>(script, true);
       const jobs = Array.isArray(captured) ? captured.filter((job) => job.title && job.description?.length >= 20 && /^https?:/.test(job.url)) : [];
       if (!jobs.length) throw new Error(mode === "current" ? "当前页面不是完整岗位详情，请打开一个岗位后重试" : "当前页面没有识别到岗位列表，请确认列表已加载");
-      const result = await api.captureJobs(jobs);
-      setMessage(`读取 ${result.received} 条，新增 ${result.inserted} 条；重复岗位已自动跳过。`);
+      const result = await api.captureJobs(jobs, true);
+      setCapturedIds(result.ids);
+      const top = result.topMatches[0];
+      setMessage(`读取 ${result.received} 条，新增 ${result.inserted} 条，已自动评分 ${result.analyzed} 条${top ? `；当前最高 ${top.score} 分：${top.title}` : ""}。`);
       await onChanged();
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "岗位采集失败");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const prepare = async () => {
+    if (!capturedIds.length) return;
+    setBusy("prepare");
+    setMessage(aiStatus.configured ? "正在用 AI 深度分析高匹配岗位并生成简历..." : "正在按母版为高匹配岗位生成简历...");
+    try {
+      const result = await api.prepareJobs(capturedIds, { maxVariants: 3, minScore: 55, mode: "auto" });
+      const aiCount = result.prepared.filter((item) => item.analysisMode === "ai").length;
+      const reused = result.prepared.filter((item) => item.reused).length;
+      if (!result.prepared.length) {
+        setMessage(result.failures[0] || "当前岗位均未达到 55 分，暂不生成简历。");
+      } else {
+        setMessage(`已准备 ${result.prepared.length} 份岗位简历${aiCount ? `，其中 ${aiCount} 份完成 AI 深度分析` : ""}${reused ? `；复用 ${reused} 份已有版本` : ""}。`);
+      }
+      await onChanged();
+    } catch (caught) {
+      setMessage(caught instanceof Error ? caught.message : "岗位简历生成失败");
     } finally {
       setBusy("");
     }
@@ -352,21 +376,28 @@ function EmbeddedRecruitmentBrowser({ links, onChanged }: { links: SearchLink[];
         <IconButton icon={RefreshCw} label="刷新招聘页面" onClick={() => webview?.reload()} />
         <form onSubmit={(event) => { event.preventDefault(); navigate(address); }}><Globe2 size={15} /><input aria-label="招聘页面地址" value={address} onChange={(event) => setAddress(event.target.value)} /><button>打开</button></form>
         <Button icon={FileText} variant="secondary" disabled={Boolean(busy) || loading} onClick={() => void capture("current")}>{busy === "current" ? "读取中" : "采集当前岗位"}</Button>
-        <Button icon={ScanSearch} disabled={Boolean(busy) || loading} onClick={() => void capture("list")}>{busy === "list" ? "扫描中" : "扫描当前列表"}</Button>
+        <Button icon={ScanSearch} disabled={Boolean(busy) || loading} onClick={() => void capture("list")}>{busy === "list" ? "扫描评分中" : "扫描并匹配"}</Button>
       </div>
       <div className={`webview-stage ${loading ? "is-loading" : ""}`}>
         {loading ? <div className="webview-loading"><LoaderCircle className="spin" size={20} />正在加载招聘网站</div> : null}
         <webview ref={setWebview} src={requestedUrl} partition="persist:jobpilot-recruitment" useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36" />
       </div>
-      <div className={`browser-message ${/失败|没有|不是|请等待|请输入/.test(message) ? "error" : ""}`}><ShieldCheck size={15} />{message}</div>
+      <div className="browser-result-bar">
+        <div className={`browser-message ${/失败|没有|不是|请等待|请输入|未达到/.test(message) ? "error" : ""}`}><ShieldCheck size={15} />{message}</div>
+        {capturedIds.length ? <Button icon={WandSparkles} disabled={Boolean(busy)} onClick={() => void prepare()}>{busy === "prepare" ? "正在生成" : "生成 Top 3 简历"}</Button> : null}
+      </div>
     </section>
   );
 }
 
-function DiscoverPage({ sources, jobCount, onChanged }: { sources: SourceDefinition[]; jobCount: number; onChanged: () => Promise<void> }) {
-  const [query, setQuery] = useState("AI 产品经理");
-  const [city, setCity] = useState("杭州");
+function DiscoverPage({ master, aiStatus, sources, jobCount, onChanged }: { master: ResumeMaster; aiStatus: AIStatus; sources: SourceDefinition[]; jobCount: number; onChanged: () => Promise<void> }) {
+  const [query, setQuery] = useState(master.data.basics.title || "相关岗位");
+  const [city, setCity] = useState(master.data.basics.location || "全国");
   const [links, setLinks] = useState<SearchLink[]>([]);
+  const [plan, setPlan] = useState<SearchPlan | null>(null);
+  const [activeStrategyId, setActiveStrategyId] = useState("");
+  const [planning, setPlanning] = useState(true);
+  const [planMessage, setPlanMessage] = useState("");
   const [collectorPath, setCollectorPath] = useState("D:\\toudi\\extension");
   const [mode, setMode] = useState<ImportMode>("url");
   const [url, setUrl] = useState("");
@@ -375,10 +406,32 @@ function DiscoverPage({ sources, jobCount, onChanged }: { sources: SourceDefinit
   const [message, setMessage] = useState("");
   const desktopMode = isDesktopShell();
 
+  const useStrategy = async (strategy: SearchStrategy, nextCity = city) => {
+    setActiveStrategyId(strategy.id);
+    setQuery(strategy.query);
+    setLinks(await api.searchLinks(strategy.query, nextCity));
+  };
+
+  const createPlan = async (refresh = false) => {
+    setPlanning(true);
+    setPlanMessage(aiStatus.configured ? "AI 正在从母版生成求职方向..." : "正在从母版提取求职方向...");
+    try {
+      const next = await api.searchPlan(city, { preferAI: aiStatus.configured, refresh });
+      setPlan(next);
+      setCity(next.city);
+      if (next.strategies[0]) await useStrategy(next.strategies[0], next.city);
+      setPlanMessage(next.fallbackReason || `已生成 ${next.strategies.length} 个方向，默认打开匹配度最高的一组。`);
+    } catch (caught) {
+      setPlanMessage(caught instanceof Error ? caught.message : "无法从母版生成搜索方向");
+    } finally {
+      setPlanning(false);
+    }
+  };
+
   useEffect(() => {
     void api.collectorInfo().then((info) => setCollectorPath(info.extensionPath)).catch(() => undefined);
-    void api.searchLinks(query, city).then(setLinks).catch(() => undefined);
-  }, []);
+    void createPlan(false);
+  }, [master.id]);
 
   const createLinks = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -422,18 +475,29 @@ function DiscoverPage({ sources, jobCount, onChanged }: { sources: SourceDefinit
 
   return (
     <>
-      <PageHeader title="岗位发现" subtitle="从招聘网站搜索、公开链接或当前浏览器页面导入真实岗位" actions={<div className="live-count"><span className="status-dot" />岗位库已有 <b>{jobCount}</b> 条</div>} />
+      <PageHeader title="岗位发现" subtitle="从简历母版自动规划方向，扫描 JD 后完成匹配和岗位简历准备" actions={<div className="live-count"><span className="status-dot" />岗位库已有 <b>{jobCount}</b> 条</div>} />
       <section className="discovery-command">
-        <div className="command-heading"><Radar size={20} /><div><h2>跨平台搜索</h2><p>{desktopMode ? "搜索结果直接载入下方内置浏览器，登录态会保留" : "生成真实平台搜索入口，登录和验证留在你的浏览器中完成"}</p></div></div>
+        <div className="command-top">
+          <div className="command-heading"><Radar size={20} /><div><h2>母版驱动搜索</h2><p>母版 v{master.version} · {master.data.basics.title || "未识别目标职位"} · {plan?.skills.slice(0, 4).join(" / ") || "正在读取技能"}</p></div></div>
+          <Tag tone={plan?.mode === "ai" ? "blue" : "green"} icon={plan?.mode === "ai" ? Bot : Gauge}>{plan?.mode === "ai" ? "AI 规划" : "本地规划"}</Tag>
+        </div>
+        {planning ? <div className="strategy-loading"><LoaderCircle className="spin" size={17} />{planMessage}</div> : plan ? <div className="strategy-list" role="radiogroup" aria-label="母版推荐搜索方向">{plan.strategies.map((strategy) => (
+          <button key={strategy.id} role="radio" aria-checked={activeStrategyId === strategy.id} className={activeStrategyId === strategy.id ? "active" : ""} onClick={() => void useStrategy(strategy)}>
+            <span className="strategy-score">{strategy.confidence}</span>
+            <span><strong>{strategy.title}</strong><code>{strategy.query}</code><small>{strategy.reason}</small></span>
+            {activeStrategyId === strategy.id ? <Check size={16} /> : <ChevronRight size={16} />}
+          </button>
+        ))}</div> : null}
+        <div className={`plan-status ${/不可用|无法|失败/.test(planMessage) ? "warning" : ""}`}><Sparkles size={15} /><span>{planMessage}</span><Button type="button" icon={RefreshCw} variant="ghost" disabled={planning} onClick={() => void createPlan(true)}>{aiStatus.configured ? "AI 重新规划" : "重新提取"}</Button></div>
         <form className="search-command" onSubmit={createLinks}>
-          <label><span>目标岗位</span><div><Search size={17} /><input required value={query} onChange={(event) => setQuery(event.target.value)} /></div></label>
+          <label><span>当前搜索词（可微调）</span><div><Search size={17} /><input required value={query} onChange={(event) => setQuery(event.target.value)} /></div></label>
           <label><span>城市</span><div><FolderSearch size={17} /><input value={city} onChange={(event) => setCity(event.target.value)} /></div></label>
-          <Button icon={Radar} disabled={busy}>更新入口</Button>
+          <Button icon={Radar} disabled={busy}>应用搜索</Button>
         </form>
         {!desktopMode ? <div className="platform-launches">{links.map((link) => <a key={link.id} href={link.url} target="_blank" rel="noreferrer"><span className={`source-logo source-${link.id}`}>{link.name.slice(0, 1)}</span><span><strong>{link.name}</strong><small>打开搜索结果</small></span><ArrowUpRight size={16} /></a>)}</div> : null}
       </section>
 
-      {desktopMode ? <EmbeddedRecruitmentBrowser links={links} onChanged={onChanged} /> : <section className="surface desktop-browser-prompt"><div><Globe2 size={20} /><span><strong>内置招聘浏览器需要桌面模式</strong><small>运行 <code>npm run desktop</code>，即可在项目内登录和浏览 BOSS、智联、猎聘、拉勾。</small></span></div><Tag tone="blue">网页模式</Tag></section>}
+      {desktopMode ? <EmbeddedRecruitmentBrowser links={links} aiStatus={aiStatus} onChanged={onChanged} /> : <section className="surface desktop-browser-prompt"><div><Globe2 size={20} /><span><strong>内置招聘浏览器需要桌面模式</strong><small>运行 <code>npm run desktop</code>，即可在项目内登录和浏览 BOSS、智联、猎聘、拉勾。</small></span></div><Tag tone="blue">网页模式</Tag></section>}
 
       <div className="discovery-grid">
         <section className="surface source-status-panel">
@@ -669,7 +733,7 @@ export default function App() {
         <div className="page-content">
           {page === "overview" && overview ? <OverviewPage overview={overview} master={master} jobs={jobs} aiStatus={aiStatus} onNavigate={navigate} /> : null}
           {page === "resume" ? <ResumePage master={master} onUploaded={(item) => void uploaded(item)} /> : null}
-          {page === "discover" ? <DiscoverPage sources={sources} jobCount={jobs.length} onChanged={refresh} /> : null}
+          {page === "discover" ? <DiscoverPage master={master} aiStatus={aiStatus} sources={sources} jobCount={jobs.length} onChanged={refresh} /> : null}
           {page === "jobs" ? <JobsPage jobs={jobs} aiStatus={aiStatus} refresh={refresh} onConfigureAI={() => navigate("settings")} /> : null}
           {page === "variants" ? <VariantsPage variants={variants} /> : null}
           {page === "applications" ? <ApplicationsPage applications={applications} refresh={refresh} /> : null}

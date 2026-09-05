@@ -8,11 +8,12 @@ import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import { z } from "zod";
-import type { ApplicationStatus, Job } from "../shared/types.js";
-import { configureAI, getAIStatus, scoreJobWithAI, testAIConnection } from "./ai-provider.js";
+import type { ApplicationStatus, Job, SearchPlan } from "../shared/types.js";
+import { configureAI, getAIStatus, planSearchWithAI, scoreJobWithAI, testAIConnection } from "./ai-provider.js";
 import {
   createResumeMaster,
   createVariant,
+  findVariantForJobAndMaster,
   getJob,
   insertJob,
   latestMaster,
@@ -29,9 +30,11 @@ import {
 import { extractResumeText, structureResume } from "./resume-parser.js";
 import { buildSearchLinks, detectSource, importJobFromUrl } from "./job-page-parser.js";
 import { scoreJob, tailorResume } from "./scoring.js";
+import { buildRuleSearchPlan } from "./search-planner.js";
 import { sources } from "./sources.js";
 
 const app = Fastify({ logger: true, bodyLimit: 12 * 1024 * 1024 });
+let cachedSearchPlan: SearchPlan | null = null;
 await app.register(cors, { origin: true });
 await app.register(multipart, {
   limits: { fileSize: 10 * 1024 * 1024, files: 1 },
@@ -57,7 +60,7 @@ app.setErrorHandler((error, _request, reply) => {
   reply.status(statusCode).send({ error: normalized.message || "请求处理失败" });
 });
 
-app.get("/api/health", async () => ({ status: "ok", version: "0.3.0", time: new Date().toISOString() }));
+app.get("/api/health", async () => ({ status: "ok", version: "0.4.0", time: new Date().toISOString() }));
 app.get("/api/overview", async () => overview());
 app.get("/api/sources", async () => sources);
 app.get("/api/ai/status", async () => getAIStatus());
@@ -66,6 +69,33 @@ app.post("/api/ai/config", async (request) => {
   return configureAI(body);
 });
 app.post("/api/ai/test", async () => testAIConnection());
+app.post("/api/search-plan", async (request, reply) => {
+  const body = z.object({
+    city: z.string().trim().max(40).default(""),
+    preferAI: z.boolean().default(true),
+    refresh: z.boolean().default(false),
+  }).default({ city: "", preferAI: true, refresh: false }).parse(request.body);
+  const master = latestMaster();
+  if (!master) return reply.status(409).send({ error: "请先上传原始简历" });
+  const city = body.city || master.data.basics.location || "全国";
+  if (!body.refresh && cachedSearchPlan?.masterId === master.id && cachedSearchPlan.city === city && (!body.preferAI || cachedSearchPlan.mode === "ai")) {
+    return cachedSearchPlan;
+  }
+  const baseline = buildRuleSearchPlan(master, city);
+  if (!body.preferAI || !getAIStatus().configured) {
+    cachedSearchPlan = baseline;
+    return baseline;
+  }
+  try {
+    cachedSearchPlan = await planSearchWithAI(master, baseline);
+  } catch (error) {
+    cachedSearchPlan = {
+      ...baseline,
+      fallbackReason: `AI 规划暂不可用，已使用本地母版分析：${error instanceof Error ? error.message : "未知错误"}`,
+    };
+  }
+  return cachedSearchPlan;
+});
 app.get("/api/sources/search-links", async (request) => {
   const query = z.object({ q: z.string().trim().min(1), city: z.string().trim().default("") }).parse(request.query);
   return buildSearchLinks(query.q, query.city);
@@ -158,8 +188,13 @@ app.post("/api/jobs/capture", async (request, reply) => {
     url: z.string().url(),
     postedAt: z.string().trim().default(""),
   });
-  const body = z.union([capturedJob, z.array(capturedJob).min(1).max(100)]).parse(request.body);
-  const items = Array.isArray(body) ? body : [body];
+  const parsedBody = z.union([
+    capturedJob,
+    z.array(capturedJob).min(1).max(100),
+    z.object({ jobs: z.array(capturedJob).min(1).max(100), autoAnalyze: z.boolean().default(false) }),
+  ]).parse(request.body);
+  const autoAnalyze = !Array.isArray(parsedBody) && "jobs" in parsedBody ? parsedBody.autoAnalyze : false;
+  const items = Array.isArray(parsedBody) ? parsedBody : "jobs" in parsedBody ? parsedBody.jobs : [parsedBody];
   const results = items.map((item) => insertJob({
     ...item,
     source: item.source || detectSource(item.url),
@@ -168,7 +203,21 @@ app.post("/api/jobs/capture", async (request, reply) => {
     salaryMax: null,
     status: "new",
   }));
-  return reply.status(201).send({ received: items.length, inserted: results.filter((item) => item.inserted).length, ids: results.map((item) => item.id) });
+  const ids = [...new Set(results.map((item) => item.id))];
+  const topMatches = autoAnalyze && latestMaster()
+    ? ids.map((id) => {
+      const job = getJob(id)!;
+      const analysis = analyzeOne(job);
+      return { id, title: job.title, company: job.company, score: analysis.totalScore };
+    }).sort((a, b) => b.score - a.score)
+    : [];
+  return reply.status(201).send({
+    received: items.length,
+    inserted: results.filter((item) => item.inserted).length,
+    ids,
+    analyzed: topMatches.length,
+    topMatches: topMatches.slice(0, 5),
+  });
 });
 
 app.post("/api/jobs/seed", async (_request, reply) => {
@@ -228,6 +277,59 @@ app.post("/api/jobs/:id/analyze", async (request, reply) => {
 app.post("/api/jobs/analyze", async () => {
   const jobs = listJobs();
   return { analyzed: jobs.length, results: jobs.map(analyzeOne) };
+});
+
+app.post("/api/jobs/prepare", async (request, reply) => {
+  const body = z.object({
+    ids: z.array(z.number().int().positive()).min(1).max(100).optional(),
+    maxVariants: z.number().int().min(1).max(10).default(3),
+    minScore: z.number().min(0).max(100).default(55),
+    mode: z.enum(["auto", "rules", "ai"]).default("auto"),
+  }).default({ maxVariants: 3, minScore: 55, mode: "auto" }).parse(request.body);
+  const master = latestMaster();
+  if (!master) return reply.status(409).send({ error: "请先上传原始简历" });
+  const jobs = body.ids ? body.ids.map(getJob).filter((job): job is Job => Boolean(job)) : listJobs();
+  if (!jobs.length) return reply.status(409).send({ error: "没有可处理的岗位，请先扫描岗位列表" });
+
+  const ranked = jobs
+    .map((job) => ({ job, analysis: saveAnalysis(master.id, scoreJob(job, master.data)) }))
+    .filter((entry) => entry.analysis.totalScore >= body.minScore)
+    .sort((a, b) => b.analysis.totalScore - a.analysis.totalScore)
+    .slice(0, body.maxVariants);
+  const useAI = body.mode === "ai" || (body.mode === "auto" && getAIStatus().configured);
+  const failures: string[] = [];
+  const prepared = [];
+
+  for (const entry of ranked) {
+    let analysis = entry.analysis;
+    if (useAI) {
+      try {
+        analysis = saveAnalysis(master.id, await scoreJobWithAI(entry.job, master.data));
+      } catch (error) {
+        failures.push(`${entry.job.title}：${error instanceof Error ? error.message : "AI 分析失败，已使用规则结果"}`);
+      }
+    }
+    if (analysis.totalScore < body.minScore) continue;
+    const existing = findVariantForJobAndMaster(entry.job.id, master.id);
+    const tailored = existing ? null : tailorResume(entry.job, master.data, analysis);
+    const variant = existing || createVariant({
+      jobId: entry.job.id,
+      masterId: master.id,
+      name: `${entry.job.company}-${entry.job.title}-定制版`,
+      content: tailored!.content,
+      rationale: tailored!.rationale,
+    });
+    prepared.push({
+      jobId: entry.job.id,
+      title: entry.job.title,
+      company: entry.job.company,
+      score: analysis.totalScore,
+      analysisMode: analysis.analysisMode,
+      variantId: variant.id,
+      reused: Boolean(existing),
+    });
+  }
+  return { scanned: jobs.length, eligible: ranked.length, prepared, failures };
 });
 
 app.post("/api/jobs/:id/variants", async (request, reply) => {

@@ -16,7 +16,7 @@ const master: ResumeMasterData = {
       id: "experience-01",
       type: "experience",
       title: "工作经历",
-      items: [{ id: "work-01", heading: "示例科技", subheading: "产品经理", dateRange: "2021-至今", bullets: ["使用 SQL 和 Excel 分析业务数据", "编写 PRD 并开展用户研究"] }],
+      items: [{ id: "work-01", heading: "示例科技", subheading: "产品经理", dateRange: "2021-至今", bullets: ["组织团队日常协作与项目复盘", "使用 SQL 和 Excel 分析业务数据", "编写 PRD 并开展用户研究"] }],
     },
     {
       id: "education-01",
@@ -66,11 +66,15 @@ describe("job matching", () => {
   it("does not inject unsupported facts into a tailored resume", () => {
     const analysis = { ...scoreJob(job(), master), id: 1, createdAt: "2026-09-04T00:00:00.000Z" } satisfies MatchAnalysis;
     const tailored = tailorResume(job(), master, analysis);
+    const originalBullets = master.sections.flatMap((section) => section.items.flatMap((item) => item.bullets)).sort();
+    const tailoredBullets = tailored.content.sections.flatMap((section) => section.items.flatMap((item) => item.bullets)).sort();
 
     expect(tailored.content.basics.name).toBe(master.basics.name);
     expect(tailored.content.basics.email).toBe(master.basics.email);
-    expect(tailored.content.sections.map(({ id, items }) => ({ id, items }))).toEqual(expect.arrayContaining(master.sections.map(({ id, items }) => ({ id, items }))));
+    expect(tailored.content.sections.map((section) => section.id)).toEqual(expect.arrayContaining(master.sections.map((section) => section.id)));
+    expect(tailoredBullets).toEqual(originalBullets);
     expect(tailored.content.sourceText).toBe(master.sourceText);
+    expect(tailored.content.sections.find((section) => section.id === "experience-01")?.items[0].bullets[0]).toContain("SQL");
     expect(tailored.rationale.join(" ")).toContain("不添加原始简历之外的事实");
   });
 });

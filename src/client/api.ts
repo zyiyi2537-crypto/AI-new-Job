@@ -1,4 +1,4 @@
-import type { AIStatus, Job, Overview, ResumeMaster, ResumeVariant, SearchLink, SourceDefinition } from "../shared/types";
+import type { AIStatus, Job, Overview, PreparedJob, ResumeMaster, ResumeVariant, SearchLink, SearchPlan, SourceDefinition } from "../shared/types";
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options);
@@ -40,16 +40,26 @@ export const api = {
   }),
   testAI: () => request<{ ok: true; latencyMs: number; status: AIStatus }>("/api/ai/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }),
   searchLinks: (query: string, city: string) => request<SearchLink[]>(`/api/sources/search-links?q=${encodeURIComponent(query)}&city=${encodeURIComponent(city)}`),
+  searchPlan: (city: string, options: { preferAI?: boolean; refresh?: boolean } = {}) => request<SearchPlan>("/api/search-plan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ city, preferAI: options.preferAI ?? true, refresh: options.refresh ?? false }),
+  }),
   collectorInfo: () => request<{ extensionPath: string; supportedSources: string[] }>("/api/collector/info"),
   importJobUrl: (url: string) => request<{ inserted: number; ids: number[]; job: Job }>("/api/jobs/import-url", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url }),
   }),
-  captureJobs: (jobs: Array<Record<string, unknown>>) => request<{ received: number; inserted: number; ids: number[] }>("/api/jobs/capture", {
+  captureJobs: (jobs: Array<Record<string, unknown>>, autoAnalyze = false) => request<{ received: number; inserted: number; ids: number[]; analyzed: number; topMatches: Array<{ id: number; title: string; company: string; score: number }> }>("/api/jobs/capture", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(jobs),
+    body: JSON.stringify(autoAnalyze ? { jobs, autoAnalyze: true } : jobs),
+  }),
+  prepareJobs: (ids: number[], options: { maxVariants?: number; minScore?: number; mode?: "auto" | "rules" | "ai" } = {}) => request<{ scanned: number; eligible: number; prepared: PreparedJob[]; failures: string[] }>("/api/jobs/prepare", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids, maxVariants: options.maxVariants ?? 3, minScore: options.minScore ?? 55, mode: options.mode ?? "auto" }),
   }),
   setApplicationStatus: (jobId: number, status: string) => request<{ ok: boolean }>(`/api/applications/${jobId}/status`, {
     method: "PUT",
