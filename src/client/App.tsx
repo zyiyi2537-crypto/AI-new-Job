@@ -190,8 +190,16 @@ function ResumeDocument({ data, dense = false }: { data: ResumeMasterData; dense
   );
 }
 
+function aiStatusView(status: AIStatus): { label: string; detail: string; tone: "green" | "amber" | "red"; connected: boolean } {
+  if (status.lastError) return { label: "连接失败", detail: status.model || "检查模型配置", tone: "red", connected: false };
+  if (status.configured && status.lastCheckedAt) return { label: "已连接", detail: status.model, tone: "green", connected: true };
+  if (status.configured) return { label: "待测试", detail: status.model, tone: "amber", connected: false };
+  return { label: "未配置", detail: "规则模式可用", tone: "amber", connected: false };
+}
+
 function OverviewPage({ overview, master, jobs, aiStatus, onNavigate }: { overview: Overview; master: ResumeMaster; jobs: Job[]; aiStatus: AIStatus; onNavigate: (page: Page) => void }) {
   const priority = [...jobs].filter((job) => job.analysis).sort((a, b) => (b.analysis?.totalScore || 0) - (a.analysis?.totalScore || 0)).slice(0, 5);
+  const aiView = aiStatusView(aiStatus);
   return (
     <>
       <PageHeader title="求职总览" subtitle="从岗位进入、匹配分析到投递结果的统一工作区" actions={<Button icon={Radar} onClick={() => onNavigate("discover")}>发现岗位</Button>} />
@@ -200,7 +208,7 @@ function OverviewPage({ overview, master, jobs, aiStatus, onNavigate }: { overvi
         <div><span>已分析</span><strong>{overview.analyzed}</strong><small>规则或 AI</small></div>
         <div className="metric-focus"><span>高匹配</span><strong>{overview.shortlisted}</strong><small>建议优先处理</small></div>
         <div><span>岗位简历</span><strong>{overview.variants}</strong><small>独立版本</small></div>
-        <div><span>AI 引擎</span><strong className="metric-text">{aiStatus.configured ? "在线" : "未配置"}</strong><small>{aiStatus.configured ? aiStatus.model : "规则模式可用"}</small></div>
+        <div><span>AI 引擎</span><strong className="metric-text">{aiView.label}</strong><small>{aiView.detail}</small></div>
       </section>
       <div className="dashboard-grid">
         <section className="surface priority-panel">
@@ -638,33 +646,72 @@ function ApplicationsPage({ applications, refresh }: { applications: Array<Recor
 function SettingsPage({ aiStatus, onChanged }: { aiStatus: AIStatus; onChanged: () => Promise<void> }) {
   const [form, setForm] = useState({ baseUrl: aiStatus.baseUrl || "https://api.openai.com/v1", model: aiStatus.model || "gpt-5-mini", apiKey: "" });
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [models, setModels] = useState<string[]>([]);
+  const [catalogEndpoint, setCatalogEndpoint] = useState("");
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"" | "warning" | "error">("");
+  const autoSyncStarted = useRef(false);
+  const aiView = aiStatusView(aiStatus);
   useEffect(() => { setForm((current) => ({ ...current, baseUrl: aiStatus.baseUrl || current.baseUrl, model: aiStatus.model || current.model })); }, [aiStatus.baseUrl, aiStatus.model]);
+  const syncModels = useCallback(async (config: { baseUrl: string; apiKey: string; model: string }, automatic = false) => {
+    setSyncing(true);
+    if (!automatic) { setMessage("正在读取上游模型目录..."); setMessageTone(""); }
+    try {
+      const catalog = await api.aiModels({ baseUrl: config.baseUrl, apiKey: config.apiKey });
+      const selectedModel = catalog.models.includes(config.model.trim()) ? config.model.trim() : catalog.models[0];
+      setModels(catalog.models);
+      setCatalogEndpoint(catalog.endpoint);
+      setForm((current) => ({ ...current, model: selectedModel }));
+      setMessageTone(catalog.models.includes(config.model.trim()) ? "" : "warning");
+      setMessage(catalog.models.includes(config.model.trim())
+        ? `已${automatic ? "自动" : ""}同步 ${catalog.total} 个可用模型。`
+        : `已${automatic ? "自动" : ""}同步 ${catalog.total} 个可用模型；原模型不可用，已选择 ${selectedModel}，请点击“应用配置”。`);
+    } catch (caught) {
+      setModels([]);
+      setCatalogEndpoint("");
+      setMessageTone("error");
+      setMessage(`${automatic ? "自动" : ""}同步失败：${caught instanceof Error ? caught.message : "无法读取模型目录"}；仍可手工填写模型名称。`);
+    } finally {
+      setSyncing(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (autoSyncStarted.current || !aiStatus.configured || !aiStatus.baseUrl) return;
+    autoSyncStarted.current = true;
+    void syncModels({ baseUrl: aiStatus.baseUrl, apiKey: "", model: aiStatus.model }, true);
+  }, [aiStatus.baseUrl, aiStatus.configured, aiStatus.model, syncModels]);
   const save = async (event: React.FormEvent) => {
-    event.preventDefault(); setBusy(true); setMessage("");
+    event.preventDefault(); setBusy(true); setMessage(""); setMessageTone("");
     try { await api.configureAI(form); await onChanged(); setForm((current) => ({ ...current, apiKey: "" })); setMessage("配置已载入当前服务进程，请运行连接测试。"); }
-    catch (caught) { setMessage(caught instanceof Error ? caught.message : "配置失败"); }
+    catch (caught) { setMessageTone("error"); setMessage(caught instanceof Error ? caught.message : "配置失败"); }
     finally { setBusy(false); }
   };
   const test = async () => {
-    setBusy(true); setMessage("正在请求模型...");
+    setBusy(true); setMessageTone(""); setMessage("正在请求模型...");
     try { const result = await api.testAI(); await onChanged(); setMessage(`连接成功，响应耗时 ${result.latencyMs} ms；实际端点：${result.status.resolvedEndpoint}`); }
-    catch (caught) { setMessage(caught instanceof Error ? caught.message : "连接测试失败"); }
+    catch (caught) { await onChanged(); setMessageTone("error"); setMessage(caught instanceof Error ? caught.message : "连接测试失败"); }
     finally { setBusy(false); }
   };
   return (
     <>
-      <PageHeader title="设置" subtitle="连接真实 AI、查看本地数据和采集边界" actions={<Tag tone={aiStatus.configured ? "green" : "amber"} icon={Bot}>{aiStatus.configured ? "AI 已配置" : "AI 未配置"}</Tag>} />
+      <PageHeader title="设置" subtitle="连接真实 AI、查看本地数据和采集边界" actions={<Tag tone={aiView.tone} icon={Bot}>AI {aiView.label}</Tag>} />
       <div className="settings-grid">
         <section className="surface ai-settings">
           <div className="section-heading"><div><h2>AI 模型连接</h2><p>支持填写服务域名、`/v1` Base URL 或完整 `/chat/completions` 地址</p></div><Bot size={21} /></div>
           <form onSubmit={save}>
-            <label><span>API Base URL</span><input type="url" required value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} placeholder="https://api.openai.com/v1" /></label>
-            <label><span>模型名称</span><input required value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} placeholder="gpt-5-mini" /></label>
-            <label className="full"><span>API Key（仅保存在当前进程内）</span><div className="secret-input"><KeyRound size={16} /><input type="password" value={form.apiKey} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} placeholder={aiStatus.configured ? "已配置；留空则保持当前密钥" : "sk-...；本地 Ollama 可留空"} /></div></label>
-            <div className="settings-actions"><Button icon={Check} disabled={busy}>应用配置</Button><Button type="button" icon={Zap} variant="secondary" disabled={busy || !aiStatus.configured} onClick={() => void test()}>测试连接</Button></div>
+            <label><span>API Base URL</span><input type="url" required value={form.baseUrl} onChange={(event) => { setForm({ ...form, baseUrl: event.target.value }); setModels([]); setCatalogEndpoint(""); }} placeholder="https://api.openai.com/v1" /></label>
+            <div className="model-field">
+              <div className="model-field-heading"><label htmlFor="ai-model">模型名称</label><button type="button" className="model-sync" disabled={busy || syncing || !form.baseUrl} onClick={() => void syncModels(form)}><RefreshCw className={syncing ? "spin" : ""} size={13} />{syncing ? "同步中" : "同步模型"}</button></div>
+              {models.length
+                ? <select id="ai-model" required value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })}>{models.map((model) => <option key={model} value={model}>{model}</option>)}</select>
+                : <input id="ai-model" required value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} placeholder="同步失败时可手工填写" />}
+              {catalogEndpoint ? <small title={catalogEndpoint}>来源：{catalogEndpoint}</small> : null}
+            </div>
+            <label className="full"><span>API Key（仅保存在当前进程内）</span><div className="secret-input"><KeyRound size={16} /><input type="password" value={form.apiKey} onChange={(event) => { setForm({ ...form, apiKey: event.target.value }); setModels([]); setCatalogEndpoint(""); }} placeholder={aiStatus.configured ? "同一地址留空则保持当前密钥" : "sk-...；本地 Ollama 可留空"} /></div></label>
+            <div className="settings-actions"><Button icon={Check} disabled={busy || syncing}>应用配置</Button><Button type="button" icon={Zap} variant="secondary" disabled={busy || syncing || !aiStatus.configured} onClick={() => void test()}>测试连接</Button></div>
           </form>
-          {message ? <div className={`settings-message ${/失败|错误/.test(message) ? "error" : ""}`}>{message}</div> : null}
+          {message ? <div className={`settings-message ${messageTone}`}>{message}</div> : null}
           <dl className="connection-details"><div><dt>提供方</dt><dd>{aiStatus.providerLabel}</dd></div><div><dt>模型</dt><dd>{aiStatus.model || "未设置"}</dd></div><div><dt>实际端点</dt><dd>{aiStatus.resolvedEndpoint || "测试后自动识别"}</dd></div><div><dt>配置来源</dt><dd>{aiStatus.source === "environment" ? ".env" : aiStatus.source === "runtime" ? "当前进程" : "未配置"}</dd></div><div><dt>上次测试</dt><dd>{aiStatus.lastCheckedAt ? new Date(aiStatus.lastCheckedAt).toLocaleString("zh-CN") : "尚未测试"}</dd></div></dl>
         </section>
         <aside className="settings-side">
@@ -677,7 +724,8 @@ function SettingsPage({ aiStatus, onChanged }: { aiStatus: AIStatus; onChanged: 
 }
 
 function AIIndicator({ status, onClick }: { status: AIStatus; onClick: () => void }) {
-  return <button className={`ai-indicator ${status.configured ? "online" : ""}`} onClick={onClick}><span className="ai-pulse"><Bot size={15} /></span><span><strong>{status.configured ? status.providerLabel : "AI 未连接"}</strong><small>{status.configured ? status.model : "点击配置模型"}</small></span><ChevronRight size={14} /></button>;
+  const view = aiStatusView(status);
+  return <button className={`ai-indicator ${view.connected ? "online" : ""}`} onClick={onClick}><span className="ai-pulse"><Bot size={15} /></span><span><strong>{status.configured ? `${status.providerLabel} · ${view.label}` : "AI 未配置"}</strong><small>{status.configured ? status.model : "点击配置模型"}</small></span><ChevronRight size={14} /></button>;
 }
 
 export default function App() {

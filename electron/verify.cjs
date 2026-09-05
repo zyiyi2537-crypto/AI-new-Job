@@ -1,12 +1,15 @@
 const { app, BrowserWindow } = require("electron");
 const { spawn } = require("node:child_process");
-const { mkdirSync, writeFileSync } = require("node:fs");
+const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = require("node:fs");
 const http = require("node:http");
+const { tmpdir } = require("node:os");
 const path = require("node:path");
-const { DatabaseSync } = require("node:sqlite");
 
 const root = path.resolve(__dirname, "..");
 const outputDir = path.join(root, "output", "playwright");
+const testDataDir = mkdtempSync(path.join(tmpdir(), "jobpilot-desktop-"));
+const apiPort = 8877;
+const apiBase = `http://127.0.0.1:${apiPort}`;
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 let serverProcess = null;
 
@@ -50,13 +53,26 @@ function postJson(url, payload) {
 }
 
 async function ensureServer() {
-  try { await getJson("http://127.0.0.1:8787/api/health"); return; } catch { /* Start an isolated local server below. */ }
   const tsxCli = path.join(root, "node_modules", "tsx", "dist", "cli.mjs");
-  serverProcess = spawn(process.execPath, [tsxCli, path.join(root, "src", "server", "index.ts")], { cwd: root, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", OPENAI_API_KEY: "", OPENAI_MODEL: "" }, stdio: "ignore", windowsHide: true });
+  serverProcess = spawn(process.execPath, [tsxCli, path.join(root, "src", "server", "index.ts")], {
+    cwd: root,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", DATA_DIR: testDataDir, PORT: String(apiPort), OPENAI_API_KEY: "", OPENAI_MODEL: "" },
+    stdio: "ignore",
+    windowsHide: true,
+  });
   await waitFor(async () => {
     if (serverProcess.exitCode != null) throw new Error("Local server exited during startup");
-    try { return await getJson("http://127.0.0.1:8787/api/health"); } catch { return null; }
+    try { return await getJson(`${apiBase}/api/health`); } catch { return null; }
   }, "local server");
+}
+
+async function uploadFixtureResume() {
+  const body = new FormData();
+  body.append("file", new Blob([
+    "张明\nAI 应用工程师\n杭州\n\n个人简介\n具备 AI 应用、RAG 检索和后端接口开发经验。\n\n工作经历\n示例科技 AI 应用工程师 2022-至今\n使用 Python、FastAPI 和向量数据库交付企业知识库。\n\n专业技能\nPython、FastAPI、RAG、MySQL、Vue、TypeScript",
+  ], { type: "text/plain;charset=utf-8" }), "desktop-fixture-resume.txt");
+  const response = await fetch(`${apiBase}/api/resumes/import`, { method: "POST", body });
+  if (!response.ok) throw new Error(`Fixture resume upload returned ${response.status}: ${await response.text()}`);
 }
 
 function stopStartedServer() {
@@ -103,6 +119,20 @@ function startAIFixtureServer() {
     request.setEncoding("utf8");
     request.on("data", (chunk) => { raw += chunk; });
     request.on("end", () => {
+      if (request.url === "/models") {
+        response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        response.end("<html>provider console</html>");
+        return;
+      }
+      if (request.url === "/v1/models") {
+        response.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+        response.end(JSON.stringify({ data: [
+          { id: "fixture-chat-primary" },
+          { id: "text-embedding-fixture" },
+          { id: "fixture-chat-secondary" },
+        ] }));
+        return;
+      }
       if (request.url === "/chat/completions") {
         response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         response.end("<html>provider console</html>");
@@ -149,9 +179,10 @@ app.whenReady().then(async () => {
   let insertedIds = [];
   try {
     await ensureServer();
+    await uploadFixtureResume();
     aiFixtureServer = await startAIFixtureServer();
-    await postJson("http://127.0.0.1:8787/api/ai/config", { baseUrl: "http://127.0.0.1:8792", apiKey: "desktop-fixture-key", model: "desktop-verification" });
-    const beforeJobs = await getJson("http://127.0.0.1:8787/api/jobs");
+    await postJson(`${apiBase}/api/ai/config`, { baseUrl: "http://127.0.0.1:8792", apiKey: "desktop-fixture-key", model: "desktop-verification" });
+    const beforeJobs = await getJson(`${apiBase}/api/jobs`);
     const beforeIds = new Set(beforeJobs.map((job) => job.id));
     fixtureServer = await startFixtureServer();
     window = new BrowserWindow({
@@ -161,8 +192,24 @@ app.whenReady().then(async () => {
       autoHideMenuBar: true,
       webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: true },
     });
-    await window.loadURL("http://127.0.0.1:8787/?desktop=1");
+    await window.loadURL(`${apiBase}/?desktop=1`);
     await waitFor(() => window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === "岗位发现")`), "application navigation");
+    await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "设置")?.click()`);
+    const syncedModels = await waitFor(async () => {
+      const models = await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll(".ai-settings select option")).map((option) => option.value)`);
+      return models.length ? models : null;
+    }, "automatic model synchronization");
+    const selectedModel = await window.webContents.executeJavaScript(`document.querySelector(".ai-settings select")?.value || ""`);
+    if (selectedModel !== "fixture-chat-primary" || syncedModels.includes("text-embedding-fixture")) throw new Error("Upstream model synchronization did not select a valid chat model");
+    await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "应用配置")?.click()`);
+    await waitFor(async () => /配置已载入/.test(await window.webContents.executeJavaScript(`document.querySelector(".settings-message")?.textContent || ""`)), "model configuration");
+    await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "测试连接")?.click()`);
+    const connectionMessage = await waitFor(async () => {
+      const text = await window.webContents.executeJavaScript(`document.querySelector(".settings-message")?.textContent || ""`);
+      return /连接成功/.test(text) ? text : "";
+    }, "AI connection test");
+    mkdirSync(outputDir, { recursive: true });
+    writeFileSync(path.join(outputDir, "desktop-settings.png"), (await window.capturePage()).toPNG());
     await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "岗位发现")?.click()`);
     const planQueries = await waitFor(async () => {
       const queries = await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll(".strategy-list code")).map((node) => node.textContent?.trim()).filter(Boolean)`);
@@ -186,7 +233,7 @@ app.whenReady().then(async () => {
       const text = await window.webContents.executeJavaScript(`document.querySelector(".browser-message")?.textContent || ""`);
       return text && text !== beforeBossMessage && !/正在扫描/.test(text) ? text : "";
     }, "BOSS list capture", 15_000);
-    const bossJobs = await getJson("http://127.0.0.1:8787/api/jobs");
+    const bossJobs = await getJson(`${apiBase}/api/jobs`);
     const bossTitles = bossJobs.filter((job) => !beforeIds.has(job.id)).map((job) => job.title);
 
     await window.webContents.executeJavaScript(`document.querySelector("webview").loadURL("http://127.0.0.1:8791/")`);
@@ -196,37 +243,31 @@ app.whenReady().then(async () => {
       const text = await window.webContents.executeJavaScript(`document.querySelector(".browser-message")?.textContent || ""`);
       return /新增\s*2\s*条/.test(text) ? text : "";
     }, "list capture");
-    const afterJobs = await getJson("http://127.0.0.1:8787/api/jobs");
+    const afterJobs = await getJson(`${apiBase}/api/jobs`);
     insertedIds = afterJobs.filter((job) => !beforeIds.has(job.id)).map((job) => job.id);
     const insertedTitles = afterJobs.filter((job) => insertedIds.includes(job.id)).map((job) => job.title);
     if (!insertedTitles.includes("AI 应用工程师") || !insertedTitles.includes("RAG 后端工程师")) throw new Error("Captured fixture jobs were not persisted");
-    const variantsBefore = await getJson("http://127.0.0.1:8787/api/variants");
+    const variantsBefore = await getJson(`${apiBase}/api/variants`);
     const variantIdsBefore = new Set(variantsBefore.map((variant) => variant.id));
     await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("生成 Top 3 简历"))?.click()`);
     const prepareMessage = await waitFor(async () => {
       const text = await window.webContents.executeJavaScript(`document.querySelector(".browser-message")?.textContent || ""`);
       return /已准备\s*2\s*份岗位简历/.test(text) ? text : "";
     }, "resume preparation");
-    const variantsAfter = await getJson("http://127.0.0.1:8787/api/variants");
+    const variantsAfter = await getJson(`${apiBase}/api/variants`);
     const variantTitles = variantsAfter.filter((variant) => !variantIdsBefore.has(variant.id)).map((variant) => variant.jobTitle);
     if (!variantTitles.includes("AI 应用工程师") || !variantTitles.includes("RAG 后端工程师")) throw new Error("Job-specific resume variants were not persisted");
     writeFileSync(path.join(outputDir, "desktop-capture.png"), (await window.capturePage()).toPNG());
-    process.stdout.write(`${JSON.stringify({ ok: true, planQueries, externalResult, bossCaptureMessage, bossTitles, message, insertedTitles, prepareMessage, variantTitles })}\n`);
+    process.stdout.write(`${JSON.stringify({ ok: true, syncedModels, selectedModel, connectionMessage, planQueries, externalResult, bossCaptureMessage, bossTitles, message, insertedTitles, prepareMessage, variantTitles })}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.stack : error}\n`);
     process.exitCode = 1;
   } finally {
-    if (insertedIds.length) {
-      const db = new DatabaseSync(path.join(root, "data", "jobpilot.db"));
-      db.exec("PRAGMA foreign_keys=ON");
-      const placeholders = insertedIds.map(() => "?").join(",");
-      db.prepare(`DELETE FROM jobs WHERE id IN (${placeholders})`).run(...insertedIds);
-      db.close();
-    }
     if (window && !window.isDestroyed()) window.destroy();
     if (fixtureServer) await new Promise((resolve) => fixtureServer.close(resolve));
     if (aiFixtureServer) await new Promise((resolve) => aiFixtureServer.close(resolve));
     await stopStartedServer();
+    rmSync(testDataDir, { recursive: true, force: true });
     app.exit(process.exitCode || 0);
   }
 });

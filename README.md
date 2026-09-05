@@ -10,7 +10,7 @@ JobPilot CN 是一个面向国内求职场景的本地 AI 求职工作台。当�
 
 - 上传 PDF、DOCX、Markdown、TXT 或 JSON 简历，自动建立结构化简历母版
 - 重复文件识别和本地版本管理
-- OpenAI-compatible 真实模型连接、连接测试和 AI 深度岗位分析
+- OpenAI-compatible 真实模型连接、上游模型自动同步、连接测试和 AI 深度岗位分析
 - 根据简历母版自动生成 3–5 组岗位搜索方向，AI 不可用时回退本地规则
 - BOSS、智联、猎聘、拉勾内置桌面浏览器，保留独立登录态并支持当前页/列表采集
 - Chrome 当前页面/列表采集助手，可在普通网页模式下作为备用方案
@@ -69,7 +69,7 @@ npm run test:desktop
 
 ### AI 配置
 
-可直接在“设置 → AI 模型连接”中输入 Base URL、模型名和 API Key。Base URL 可以填写服务域名、带 `/v1` 的地址或完整 `/chat/completions` 地址；连接测试会自动识别端点并显示最终请求地址。通过界面输入的密钥只保存在当前服务进程内，重启后失效。
+可直接在“设置 → AI 模型连接”中输入 Base URL 和 API Key。进入设置页后，应用会从上游 `/models` 或 `/v1/models` 自动同步当前账号可用的对话模型，也可点击“同步模型”手动刷新；上游不提供模型目录时仍可手工填写模型名。Base URL 可以填写服务域名、带 `/v1` 的地址或完整 `/chat/completions` 地址，连接测试会自动识别端点并显示最终请求地址。通过界面输入的密钥只保存在当前服务进程内，重启后失效；更换 Base URL 时不会把旧地址的密钥发送给新地址。
 
 需要持久化配置时，复制 `.env.example` 为 `.env` 并填写：
 
@@ -120,6 +120,7 @@ OPENAI_MODEL=gpt-5-mini
 | `POST` | `/api/jobs/:id/analyze` | 规则或 AI 深度分析 |
 | `POST` | `/api/jobs/:id/variants` | 生成岗位定制简历 |
 | `POST` | `/api/ai/config` | 加载当前进程 AI 配置 |
+| `POST` | `/api/ai/models` | 探测并同步上游可用对话模型 |
 | `POST` | `/api/ai/test` | 测试真实模型连接 |
 | `PUT` | `/api/applications/:jobId/status` | 更新投递状态 |
 

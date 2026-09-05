@@ -9,7 +9,7 @@ import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
 import { z } from "zod";
 import type { ApplicationStatus, Job, SearchPlan } from "../shared/types.js";
-import { configureAI, getAIStatus, planSearchWithAI, scoreJobWithAI, testAIConnection } from "./ai-provider.js";
+import { configureAI, fetchAIModels, getAIStatus, planSearchWithAI, scoreJobWithAI, testAIConnection } from "./ai-provider.js";
 import {
   createResumeMaster,
   createVariant,
@@ -60,13 +60,17 @@ app.setErrorHandler((error, _request, reply) => {
   reply.status(statusCode).send({ error: normalized.message || "请求处理失败" });
 });
 
-app.get("/api/health", async () => ({ status: "ok", version: "0.4.0", time: new Date().toISOString() }));
+app.get("/api/health", async () => ({ status: "ok", version: "0.5.0", time: new Date().toISOString() }));
 app.get("/api/overview", async () => overview());
 app.get("/api/sources", async () => sources);
 app.get("/api/ai/status", async () => getAIStatus());
 app.post("/api/ai/config", async (request) => {
   const body = z.object({ baseUrl: z.string(), apiKey: z.string().optional(), model: z.string() }).parse(request.body);
   return configureAI(body);
+});
+app.post("/api/ai/models", async (request) => {
+  const body = z.object({ baseUrl: z.string(), apiKey: z.string().optional() }).parse(request.body);
+  return fetchAIModels(body);
 });
 app.post("/api/ai/test", async () => testAIConnection());
 app.post("/api/search-plan", async (request, reply) => {

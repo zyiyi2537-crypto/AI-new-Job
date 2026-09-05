@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AIStatus, Job, MatchAnalysis, ResumeMaster, ResumeMasterData, ScoreDimension, SearchPlan } from "../shared/types.js";
+import type { AIModelCatalog, AIStatus, Job, MatchAnalysis, ResumeMaster, ResumeMasterData, ScoreDimension, SearchPlan } from "../shared/types.js";
 import { scoreJob } from "./scoring.js";
 
 const aiResponseSchema = z.object({
@@ -44,6 +44,10 @@ let lastCheckedAt = "";
 let lastError = "";
 let resolvedEndpoint = "";
 
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.trim().replace(/\/+$/, "");
+}
+
 function providerLabel(baseUrl: string): string {
   if (/api\.openai\.com/i.test(baseUrl)) return "OpenAI";
   if (/localhost|127\.0\.0\.1/i.test(baseUrl)) return "本地模型";
@@ -74,15 +78,94 @@ export function configureAI(input: { baseUrl: string; apiKey?: string; model: st
     apiKey: z.string().max(500).optional(),
     model: z.string().trim().min(1).max(120),
   }).parse(input);
+  const baseUrl = normalizeBaseUrl(parsed.baseUrl);
+  const canReuseCurrentKey = baseUrl === normalizeBaseUrl(activeConfig.baseUrl);
   activeConfig = {
-    baseUrl: parsed.baseUrl.replace(/\/+$/, ""),
-    apiKey: parsed.apiKey?.trim() || activeConfig.apiKey,
+    baseUrl,
+    apiKey: parsed.apiKey?.trim() || (canReuseCurrentKey ? activeConfig.apiKey : ""),
     model: parsed.model,
     source: "runtime",
   };
   lastError = "";
   resolvedEndpoint = "";
   return getAIStatus();
+}
+
+function modelEndpointCandidates(baseUrl: string): string[] {
+  const normalized = normalizeBaseUrl(baseUrl);
+  if (/\/chat\/completions$/i.test(normalized)) {
+    const prefix = normalized.replace(/\/chat\/completions$/i, "");
+    return /\/v\d+$/i.test(prefix) ? [`${prefix}/models`] : [`${prefix}/models`, `${prefix}/v1/models`];
+  }
+  if (/\/v\d+$/i.test(normalized)) return [`${normalized}/models`];
+  return [`${normalized}/models`, `${normalized}/v1/models`];
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function extractModelIds(payload: unknown): string[] {
+  const root = record(payload);
+  const data = record(root?.data);
+  const result = record(root?.result);
+  const candidates = [
+    Array.isArray(payload) ? payload : null,
+    Array.isArray(root?.data) ? root.data : null,
+    Array.isArray(root?.models) ? root.models : null,
+    Array.isArray(data?.models) ? data.models : null,
+    Array.isArray(result?.data) ? result.data : null,
+    Array.isArray(result?.models) ? result.models : null,
+  ];
+  const entries = candidates.find((candidate): candidate is unknown[] => Array.isArray(candidate)) || [];
+  const ids = entries.flatMap((entry) => {
+    if (typeof entry === "string") return [entry.trim()];
+    const item = record(entry);
+    const id = item && [item.id, item.name, item.model].find((value) => typeof value === "string");
+    return typeof id === "string" ? [id.trim()] : [];
+  });
+  return [...new Set(ids.filter(Boolean))];
+}
+
+function isChatModel(model: string): boolean {
+  return !/(?:embedding|embed|rerank|moderation|whisper|tts|speech|image|dall-e|realtime|transcrib)/i.test(model);
+}
+
+export async function fetchAIModels(input: { baseUrl: string; apiKey?: string }): Promise<AIModelCatalog> {
+  const parsed = z.object({
+    baseUrl: z.string().url().refine((value) => /^https?:\/\//.test(value), "AI 地址必须使用 http 或 https"),
+    apiKey: z.string().max(500).optional(),
+  }).parse(input);
+  const baseUrl = normalizeBaseUrl(parsed.baseUrl);
+  const canReuseCurrentKey = baseUrl === normalizeBaseUrl(activeConfig.baseUrl);
+  const apiKey = parsed.apiKey?.trim() || (canReuseCurrentKey ? activeConfig.apiKey : "");
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+  let lastCatalogError: Error | null = null;
+  try {
+    for (const endpoint of modelEndpointCandidates(baseUrl)) {
+      try {
+        const response = await fetch(endpoint, { method: "GET", headers, signal: controller.signal });
+        const raw = await response.text();
+        let payload: unknown;
+        try { payload = JSON.parse(raw); } catch { throw new Error(`模型目录 ${endpoint} 未返回 JSON`); }
+        if (!response.ok) throw new Error(errorMessage(payload, response.status));
+        const upstreamModels = extractModelIds(payload);
+        const models = upstreamModels.filter(isChatModel);
+        if (!models.length) throw new Error(upstreamModels.length ? "上游目录中没有可用的对话模型" : "上游目录未返回模型列表");
+        return { models, endpoint, fetchedAt: new Date().toISOString(), total: models.length };
+      } catch (error) {
+        lastCatalogError = error instanceof Error ? error : new Error("模型目录请求失败");
+        if (lastCatalogError.name === "AbortError") break;
+      }
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (lastCatalogError?.name === "AbortError") throw new Error("同步模型超过 20 秒，请检查服务地址");
+  throw new Error(`无法同步上游模型：${lastCatalogError?.message || "未找到兼容的 /models 接口"}`);
 }
 
 function extractMessageContent(payload: unknown): string {

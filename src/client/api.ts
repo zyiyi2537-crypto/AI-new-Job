@@ -1,4 +1,4 @@
-import type { AIStatus, Job, Overview, PreparedJob, ResumeMaster, ResumeVariant, SearchLink, SearchPlan, SourceDefinition } from "../shared/types";
+import type { AIModelCatalog, AIStatus, Job, Overview, PreparedJob, ResumeMaster, ResumeVariant, SearchLink, SearchPlan, SourceDefinition } from "../shared/types";
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options);
@@ -34,6 +34,11 @@ export const api = {
   applications: () => request<Array<Record<string, unknown>>>("/api/applications"),
   aiStatus: () => request<AIStatus>("/api/ai/status"),
   configureAI: (config: { baseUrl: string; apiKey?: string; model: string }) => request<AIStatus>("/api/ai/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  }),
+  aiModels: (config: { baseUrl: string; apiKey?: string }) => request<AIModelCatalog>("/api/ai/models", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config),

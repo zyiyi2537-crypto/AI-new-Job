@@ -293,6 +293,7 @@ code { font-family: "Cascadia Code", Consolas, monospace; }
 .url-form h2 { margin-bottom: 4px; }
 .form-message, .settings-message { margin-top: 12px; padding: 9px 11px; color: var(--green-dark); border-left: 3px solid var(--green); background: var(--green-soft); font-size: 10px; line-height: 1.45; }
 .form-message.error, .settings-message.error { color: var(--red); border-left-color: var(--red); background: var(--red-soft); }
+.settings-message.warning { color: #76510e; border-left-color: #c98a19; background: var(--amber-soft); }
 .job-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
 .job-form label { min-width: 0; display: grid; gap: 6px; color: #4d5951; font-size: 10px; font-weight: 650; }
 .job-form label.full, .form-footer { grid-column: 1 / -1; }
@@ -381,9 +382,14 @@ code { font-family: "Cascadia Code", Consolas, monospace; }
 .settings-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr); align-items: start; gap: 16px; }
 .ai-settings { padding: 20px; }
 .ai-settings form { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
-.ai-settings label { min-width: 0; display: grid; gap: 6px; color: #4d5951; font-size: 10px; font-weight: 650; }
+.ai-settings label, .model-field { min-width: 0; display: grid; gap: 6px; color: #4d5951; font-size: 10px; font-weight: 650; }
 .ai-settings label.full, .settings-actions { grid-column: 1 / -1; }
-.ai-settings > form > label > input { height: 39px; padding: 0 10px; }
+.ai-settings > form > label > input, .model-field > input, .model-field > select { width: 100%; height: 39px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 5px; color: var(--ink); background: #fff; }
+.model-field-heading { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.model-field-heading label { display: block; }
+.model-sync { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; color: var(--green-dark); background: transparent; font-size: 9px; font-weight: 700; }
+.model-sync:disabled { cursor: not-allowed; opacity: .5; }
+.model-field > small { overflow: hidden; color: var(--muted); font-size: 8px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .settings-actions { justify-content: flex-end; }
 .connection-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 13px 0; margin: 20px 0 0; padding-top: 16px; border-top: 1px solid var(--line); }
 .connection-details div { min-width: 0; padding-right: 10px; }

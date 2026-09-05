@@ -134,6 +134,13 @@ export interface AIStatus {
   lastError: string;
 }
 
+export interface AIModelCatalog {
+  models: string[];
+  endpoint: string;
+  fetchedAt: string;
+  total: number;
+}
+
 export interface SearchLink {
   id: string;
   name: string;

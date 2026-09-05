@@ -1,11 +1,41 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Job, ResumeMaster, ResumeMasterData } from "../shared/types.js";
-import { configureAI, getAIStatus, planSearchWithAI, scoreJobWithAI, testAIConnection } from "./ai-provider.js";
+import { configureAI, fetchAIModels, getAIStatus, planSearchWithAI, scoreJobWithAI, testAIConnection } from "./ai-provider.js";
 import { buildRuleSearchPlan } from "./search-planner.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("AI provider", () => {
+  it("discovers and filters upstream models from an OpenAI-compatible catalog", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("<html>provider console</html>", { status: 200, headers: { "Content-Type": "text/html" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [
+        { id: "chat-primary" },
+        { id: "text-embedding-3-small" },
+        { name: "chat-secondary" },
+      ] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await fetchAIModels({ baseUrl: "https://models.example.com", apiKey: "catalog-key" });
+
+    expect(result.models).toEqual(["chat-primary", "chat-secondary"]);
+    expect(result.endpoint).toBe("https://models.example.com/v1/models");
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "https://models.example.com/models", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "https://models.example.com/v1/models", expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer catalog-key" }) }));
+  });
+
+  it("does not reuse a configured API key after the provider URL changes", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: "public-chat" }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    configureAI({ baseUrl: "https://private.example.com/v1", apiKey: "private-key", model: "private-chat" });
+
+    const status = configureAI({ baseUrl: "https://public.example.com/v1", model: "public-chat" });
+    await fetchAIModels({ baseUrl: "https://another.example.com/v1" });
+
+    expect(status.configured).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith("https://another.example.com/v1/models", expect.objectContaining({ headers: { Accept: "application/json" } }));
+  });
+
   it("uses an OpenAI-compatible chat completion for connection tests", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }), {
       status: 200,
