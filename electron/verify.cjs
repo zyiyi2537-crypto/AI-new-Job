@@ -215,17 +215,33 @@ app.whenReady().then(async () => {
       const queries = await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll(".strategy-list code")).map((node) => node.textContent?.trim()).filter(Boolean)`);
       return queries.length ? queries : null;
     }, "resume search plan");
+    await waitFor(async () => {
+      const result = await window.webContents.executeJavaScript(`(() => { const view = document.querySelector("webview"); return view ? { url: view.getURL(), loading: view.isLoading() } : null; })()`);
+      return result?.url?.includes("city=101210100") && !result.loading ? result : null;
+    }, "initial BOSS Hangzhou page", 25_000);
+    const cityControl = await window.webContents.executeJavaScript(`(() => { const select = document.querySelector('select[aria-label="目标城市"]'); return select ? { tagName: select.tagName, value: select.value, optionCount: select.options.length } : null; })()`);
+    if (cityControl?.tagName !== "SELECT" || cityControl.value !== "杭州" || cityControl.optionCount < 40) throw new Error("City selector was not initialized from the resume location");
+    await window.webContents.executeJavaScript(`(() => { const select = document.querySelector('select[aria-label="目标城市"]'); select.value = "上海"; select.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+    await waitFor(() => window.webContents.executeJavaScript(`document.querySelector('select[aria-label="目标城市"]')?.value === "上海"`), "city selection");
+    await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "应用搜索")?.click()`);
     await waitFor(() => window.webContents.executeJavaScript(`Boolean(document.querySelector("webview"))`), "embedded webview");
 
     const externalNavigation = await waitFor(async () => {
       const result = await window.webContents.executeJavaScript(`(() => { const view = document.querySelector("webview"); return view ? { url: view.getURL(), loading: view.isLoading() } : null; })()`);
-      return result?.url?.includes("zhipin.com") && !result.loading ? result : null;
-    }, "BOSS page", 25_000).catch(() => ({ url: "https://www.zhipin.com/", loading: true }));
+      return result?.url?.includes("city=101020100") && !result.loading ? result : null;
+    }, "BOSS Shanghai page", 25_000).catch(() => ({ url: "https://www.zhipin.com/?city=101020100", loading: true }));
     await wait(2000);
     const externalDocument = await window.webContents.executeJavaScript(`document.querySelector("webview")?.executeJavaScript("({ title: document.title, textLength: document.body?.innerText?.length || 0, href: location.href })")`).catch((error) => ({ error: error.message }));
     const externalResult = { ...externalNavigation, document: externalDocument };
     mkdirSync(outputDir, { recursive: true });
     writeFileSync(path.join(outputDir, "desktop-boss.png"), (await window.capturePage()).toPNG());
+    window.setSize(430, 900);
+    await wait(500);
+    const mobileLayout = await window.webContents.executeJavaScript(`(() => { const select = document.querySelector('select[aria-label="目标城市"]'); const rect = select?.getBoundingClientRect(); return { viewportWidth: document.documentElement.clientWidth, documentWidth: document.documentElement.scrollWidth, cityLeft: rect?.left || 0, cityRight: rect?.right || 0 }; })()`);
+    if (mobileLayout.documentWidth > mobileLayout.viewportWidth + 1 || mobileLayout.cityRight > mobileLayout.viewportWidth) throw new Error("City selector overflows the mobile viewport");
+    writeFileSync(path.join(outputDir, "desktop-city-mobile.png"), (await window.capturePage()).toPNG());
+    window.setSize(1440, 920);
+    await wait(500);
 
     const beforeBossMessage = await window.webContents.executeJavaScript(`document.querySelector(".browser-message")?.textContent || ""`);
     await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.includes("扫描并匹配"))?.click()`);
@@ -257,8 +273,11 @@ app.whenReady().then(async () => {
     const variantsAfter = await getJson(`${apiBase}/api/variants`);
     const variantTitles = variantsAfter.filter((variant) => !variantIdsBefore.has(variant.id)).map((variant) => variant.jobTitle);
     if (!variantTitles.includes("AI 应用工程师") || !variantTitles.includes("RAG 后端工程师")) throw new Error("Job-specific resume variants were not persisted");
+    await window.webContents.executeJavaScript(`Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "粘贴 JD")?.click()`);
+    const manualCityOptionCount = await window.webContents.executeJavaScript(`document.querySelector(".job-form select")?.options.length || 0`);
+    if (manualCityOptionCount < 43) throw new Error("Manual job form does not use the shared city selector");
     writeFileSync(path.join(outputDir, "desktop-capture.png"), (await window.capturePage()).toPNG());
-    process.stdout.write(`${JSON.stringify({ ok: true, syncedModels, selectedModel, connectionMessage, planQueries, externalResult, bossCaptureMessage, bossTitles, message, insertedTitles, prepareMessage, variantTitles })}\n`);
+    process.stdout.write(`${JSON.stringify({ ok: true, syncedModels, selectedModel, connectionMessage, planQueries, cityControl, manualCityOptionCount, mobileLayout, externalResult, bossCaptureMessage, bossTitles, message, insertedTitles, prepareMessage, variantTitles })}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.stack : error}\n`);
     process.exitCode = 1;

@@ -16,7 +16,6 @@ import {
   ExternalLink,
   FileCheck2,
   FileText,
-  FolderSearch,
   Gauge,
   Globe2,
   KeyRound,
@@ -24,6 +23,7 @@ import {
   Link2,
   LoaderCircle,
   Menu,
+  MapPin,
   Plus,
   Radar,
   RefreshCw,
@@ -40,6 +40,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { AIStatus, Job, Overview, ResumeMaster, ResumeMasterData, ResumeVariant, SearchLink, SearchPlan, SearchStrategy, SourceDefinition } from "../shared/types";
+import { CITY_GROUPS, normalizeCityName } from "../shared/cities";
 import { api } from "./api";
 import { collectJobsFromPage, type CapturedJob } from "./job-capture";
 
@@ -400,7 +401,7 @@ function EmbeddedRecruitmentBrowser({ links, aiStatus, onChanged }: { links: Sea
 
 function DiscoverPage({ master, aiStatus, sources, jobCount, onChanged }: { master: ResumeMaster; aiStatus: AIStatus; sources: SourceDefinition[]; jobCount: number; onChanged: () => Promise<void> }) {
   const [query, setQuery] = useState(master.data.basics.title || "相关岗位");
-  const [city, setCity] = useState(master.data.basics.location || "全国");
+  const [city, setCity] = useState(normalizeCityName(master.data.basics.location));
   const [links, setLinks] = useState<SearchLink[]>([]);
   const [plan, setPlan] = useState<SearchPlan | null>(null);
   const [activeStrategyId, setActiveStrategyId] = useState("");
@@ -499,7 +500,7 @@ function DiscoverPage({ master, aiStatus, sources, jobCount, onChanged }: { mast
         <div className={`plan-status ${/不可用|无法|失败/.test(planMessage) ? "warning" : ""}`}><Sparkles size={15} /><span>{planMessage}</span><Button type="button" icon={RefreshCw} variant="ghost" disabled={planning} onClick={() => void createPlan(true)}>{aiStatus.configured ? "AI 重新规划" : "重新提取"}</Button></div>
         <form className="search-command" onSubmit={createLinks}>
           <label><span>当前搜索词（可微调）</span><div><Search size={17} /><input required value={query} onChange={(event) => setQuery(event.target.value)} /></div></label>
-          <label><span>城市</span><div><FolderSearch size={17} /><input value={city} onChange={(event) => setCity(event.target.value)} /></div></label>
+          <label><span>目标城市</span><div><MapPin size={17} /><select aria-label="目标城市" value={city} onChange={(event) => setCity(event.target.value)}>{CITY_GROUPS.map((group) => <optgroup key={group.label} label={group.label}>{group.options.map((option) => <option key={option.name} value={option.name}>{option.name}</option>)}</optgroup>)}</select></div></label>
           <Button icon={Radar} disabled={busy}>应用搜索</Button>
         </form>
         {!desktopMode ? <div className="platform-launches">{links.map((link) => <a key={link.id} href={link.url} target="_blank" rel="noreferrer"><span className={`source-logo source-${link.id}`}>{link.name.slice(0, 1)}</span><span><strong>{link.name}</strong><small>打开搜索结果</small></span><ArrowUpRight size={16} /></a>)}</div> : null}
@@ -541,7 +542,7 @@ function DiscoverPage({ master, aiStatus, sources, jobCount, onChanged }: { mast
         </form> : <form className="job-form" onSubmit={importManual}>
           <label><span>岗位名称</span><input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="例如：AI 产品经理" /></label>
           <label><span>公司</span><input required value={form.company} onChange={(event) => setForm({ ...form, company: event.target.value })} placeholder="公司名称" /></label>
-          <label><span>城市</span><input value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} placeholder="杭州" /></label>
+          <label><span>岗位城市</span><select value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })}><option value="">请选择城市</option>{CITY_GROUPS.map((group) => <optgroup key={group.label} label={group.label}>{group.options.map((option) => <option key={option.name} value={option.name}>{option.name}</option>)}</optgroup>)}</select></label>
           <label><span>薪资</span><input value={form.salaryText} onChange={(event) => setForm({ ...form, salaryText: event.target.value })} placeholder="20-35K" /></label>
           <label className="full"><span>原始链接</span><input value={form.url} onChange={(event) => setForm({ ...form, url: event.target.value })} placeholder="https://..." /></label>
           <label className="full"><span>职位描述</span><textarea required minLength={20} rows={7} value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="粘贴完整职责和任职要求" /></label>

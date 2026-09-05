@@ -1,4 +1,5 @@
 import type { ResumeMaster, SearchPlan, SearchStrategy } from "../shared/types.js";
+import { normalizeCityName } from "../shared/cities.js";
 import { extractSkills } from "./scoring.js";
 
 const rolePattern = /[A-Za-z0-9+#./\u4e00-\u9fff]{0,14}(?:产品经理|项目经理|工程师|分析师|设计师|架构师|研究员|顾问|开发|测试|运营|销售)/g;
@@ -101,7 +102,7 @@ export function buildRuleSearchPlan(master: ResumeMaster, requestedCity = ""): S
   return {
     masterId: master.id,
     masterVersion: master.version,
-    city: requestedCity.trim() || master.data.basics.location || "全国",
+    city: normalizeCityName(requestedCity || master.data.basics.location),
     mode: "rules",
     generatedAt: new Date().toISOString(),
     skills: skills.slice(0, 10),

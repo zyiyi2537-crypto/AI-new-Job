@@ -223,7 +223,7 @@ code { font-family: "Cascadia Code", Consolas, monospace; }
 .search-command { display: grid; grid-template-columns: minmax(260px, 1.5fr) minmax(150px, .7fr) auto; align-items: end; gap: 10px; margin-top: 17px; }
 .search-command label { display: grid; gap: 6px; color: #4f5b53; font-size: 10px; font-weight: 650; }
 .search-command label > div, .url-form label, .secret-input { min-width: 0; height: 39px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #c7d3cb; border-radius: 5px; background: #fff; }
-.search-command input, .url-form input, .secret-input input { min-width: 0; width: 100%; height: 100%; padding: 0; border: 0; outline: 0; color: var(--ink); background: transparent; }
+.search-command input, .search-command select, .url-form input, .secret-input input { min-width: 0; width: 100%; height: 100%; padding: 0; border: 0; outline: 0; color: var(--ink); background: transparent; }
 .search-command svg, .url-form label svg, .secret-input svg { flex: 0 0 auto; color: #7b8780; }
 .platform-launches { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
 .platform-launches a { min-width: 0; display: grid; grid-template-columns: 34px minmax(0, 1fr) 16px; align-items: center; gap: 9px; padding: 10px; border: 1px solid #cfddd5; border-radius: 6px; background: rgb(255 255 255 / 75%); text-decoration: none; }
@@ -297,8 +297,8 @@ code { font-family: "Cascadia Code", Consolas, monospace; }
 .job-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
 .job-form label { min-width: 0; display: grid; gap: 6px; color: #4d5951; font-size: 10px; font-weight: 650; }
 .job-form label.full, .form-footer { grid-column: 1 / -1; }
-.job-form input, .job-form textarea, .ai-settings input, .application-board select { width: 100%; border: 1px solid var(--line-strong); border-radius: 5px; color: var(--ink); background: #fff; }
-.job-form input { height: 39px; padding: 0 10px; }
+.job-form input, .job-form textarea, .job-form select, .ai-settings input, .application-board select { width: 100%; border: 1px solid var(--line-strong); border-radius: 5px; color: var(--ink); background: #fff; }
+.job-form input, .job-form select { height: 39px; padding: 0 10px; }
 .job-form textarea { min-height: 145px; padding: 9px 10px; resize: vertical; line-height: 1.55; }
 .job-form input::placeholder, .job-form textarea::placeholder, .search-box input::placeholder, .url-form input::placeholder { color: #9ba49e; }
 .form-footer { justify-content: flex-end; }

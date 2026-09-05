@@ -29,4 +29,13 @@ describe("job page parser", () => {
     expect(links.find((item) => item.id === "boss")?.url).toContain("city=101020100");
     expect(links.find((item) => item.id === "zhaopin")?.url).toContain(encodeURIComponent("数据分析师"));
   });
+
+  it("normalizes selected cities and applies platform-specific city parameters", () => {
+    const ningboLinks = buildSearchLinks("产品经理", "浙江省宁波市");
+    expect(ningboLinks.find((item) => item.id === "boss")?.url).toContain("city=101210400");
+    expect(ningboLinks.find((item) => item.id === "zhaopin")?.url).toContain(`jl=${encodeURIComponent("宁波")}`);
+
+    const nationalLinks = buildSearchLinks("产品经理", "全国");
+    expect(nationalLinks.every((link) => !/[?&](?:city|jl|dq)=/.test(link.url))).toBe(true);
+  });
 });

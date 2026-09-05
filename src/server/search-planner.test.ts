@@ -26,7 +26,7 @@ describe("resume-driven search planning", () => {
   });
 
   it("returns distinct search queries and never includes personal contact data", () => {
-    const plan = buildRuleSearchPlan(master, "上海");
+    const plan = buildRuleSearchPlan(master, "上海市");
     const serialized = JSON.stringify(plan);
 
     expect(plan.city).toBe("上海");

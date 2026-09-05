@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { load } from "cheerio";
+import { bossCityCode, normalizeCityName } from "../shared/cities.js";
 import type { Job } from "../shared/types.js";
 
 type ImportedJob = Omit<Job, "id" | "collectedAt" | "analysis">;
@@ -155,31 +156,14 @@ export async function importJobFromUrl(rawUrl: string): Promise<ImportedJob> {
 
 export function buildSearchLinks(query: string, city: string): Array<{ id: string; name: string; url: string }> {
   const q = encodeURIComponent(query.trim());
-  const c = encodeURIComponent(city.trim());
-  const bossCityCodes: Record<string, string> = {
-    北京: "101010100",
-    上海: "101020100",
-    天津: "101030100",
-    重庆: "101040100",
-    广州: "101280100",
-    深圳: "101280600",
-    杭州: "101210100",
-    南京: "101190100",
-    苏州: "101190400",
-    成都: "101270100",
-    武汉: "101200100",
-    西安: "101110100",
-    长沙: "101250100",
-    郑州: "101180100",
-    厦门: "101230200",
-    合肥: "101220100",
-  };
-  const normalizedCity = city.trim().replace(/市$/, "");
-  const bossCity = bossCityCodes[normalizedCity];
+  const normalizedCity = normalizeCityName(city);
+  const cityQuery = normalizedCity === "全国" ? "" : normalizedCity;
+  const c = encodeURIComponent(cityQuery);
+  const bossCity = bossCityCode(normalizedCity);
   return [
     { id: "boss", name: "BOSS 直聘", url: `https://www.zhipin.com/web/geek/jobs?query=${q}${bossCity ? `&city=${bossCity}` : ""}` },
-    { id: "zhaopin", name: "智联招聘", url: `https://sou.zhaopin.com/?kw=${q}&jl=${c}` },
-    { id: "liepin", name: "猎聘", url: `https://www.liepin.com/zhaopin/?key=${q}&dq=${c}` },
-    { id: "lagou", name: "拉勾", url: `https://www.lagou.com/wn/jobs?kd=${q}&city=${c}` },
+    { id: "zhaopin", name: "智联招聘", url: `https://sou.zhaopin.com/?kw=${q}${c ? `&jl=${c}` : ""}` },
+    { id: "liepin", name: "猎聘", url: `https://www.liepin.com/zhaopin/?key=${q}${c ? `&dq=${c}` : ""}` },
+    { id: "lagou", name: "拉勾", url: `https://www.lagou.com/wn/jobs?kd=${q}${c ? `&city=${c}` : ""}` },
   ];
 }
